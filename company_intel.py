@@ -613,11 +613,14 @@ HTML_MAX_RETRIES = 3
 LIBRARY_MAX_RETRIES = 3
 SAFETY_MODE_LIMIT = 10
 
-BLOCK_RETRY_DELAY = (150, 250)
-QUERY_GAP_DELAY = (70, 90)
-SAFETY_MODE_DELAY = (60, 120)
-COMPANY_COOLDOWN_DELAY = (100, 150)
-
+# BLOCK_RETRY_DELAY = (150, 250)
+# QUERY_GAP_DELAY = (70, 90)
+# SAFETY_MODE_DELAY = (60, 120)
+# COMPANY_COOLDOWN_DELAY = (100, 150)
+BLOCK_RETRY_DELAY = (20, 40)
+QUERY_GAP_DELAY = (5, 8)
+SAFETY_MODE_DELAY = (15, 25)
+COMPANY_COOLDOWN_DELAY = (10, 20)
 # ------------------------------------------
 #  API KEY LOADER (UNCHANGED)
 # ------------------------------------------
@@ -864,4 +867,5 @@ def enrich_companies_from_list(company_list):
 
 if __name__ == "__main__":
     main()
+
 
