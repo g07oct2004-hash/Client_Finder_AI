@@ -1282,7 +1282,7 @@ if st.session_state.df is not None:
         )
 
         if st.session_state.show_leads:
-            qualified_companies = get_high_score_companies(company_df, threshold=10)#15
+            qualified_companies = get_high_score_companies(company_df, threshold=25)#15
 
             st.markdown("### 🧠 Deep Company Intelligence")
             st.write(f"Qualified Companies: {len(qualified_companies)}")
@@ -1365,6 +1365,7 @@ if st.session_state.df is not None:
     # --- DOWNLOAD ---
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(label="📥 Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
 
 
 
