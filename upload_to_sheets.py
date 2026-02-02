@@ -1,7 +1,3 @@
-
-
-
-
 import os
 import json
 import pandas as pd
@@ -26,6 +22,52 @@ MAX_CELL_CHARS = 49000
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+
+REQUIRED_COLUMNS = [
+    "meta_company_name",
+    "meta_generated_at",
+    "company_profile_company_name",
+    "company_profile_website",
+    "company_profile_industry",
+    "company_profile_tagline",
+    "leadership_team_founders",
+    "leadership_team_board_members",
+    "leadership_team_key_people",
+    "competitors",
+    "news",
+    "financials_estimated_revenue_usd",
+    "locations",
+    "contact_information_emails",
+    "contact_information_phone_numbers",
+    "Funding Status",
+    "AI Strategic Summary",
+    "lead_scoring_lead_score",
+    "lead_scoring_rank_breakout",
+]
+
+
+def ensure_sheet_headers(sheet, required_headers):
+    """
+    Ensures all required headers exist in row 1.
+    Adds missing columns WITHOUT touching existing data.
+    """
+    existing_headers = sheet.row_values(1)
+
+    if not existing_headers:
+        sheet.update("A1", [required_headers])
+        return required_headers
+
+    missing = [h for h in required_headers if h not in existing_headers]
+
+    if missing:
+        updated_headers = existing_headers + missing
+        sheet.update("A1", [updated_headers])
+        print(f" Added missing columns: {missing}")
+        return updated_headers
+
+    return existing_headers
+
 
 def truncate_cell(value):
     if isinstance(value, str) and len(value) > MAX_CELL_CHARS:
@@ -205,7 +247,7 @@ def upload_batch_data(file_paths_list):
                     data = json.load(f)
                 new_rows_data.append(flatten_json(data))
             except Exception as e:
-                print(f"⚠️ Skipping corrupt file {file_path.name}: {e}")
+                print(f" Skipping corrupt file {file_path.name}: {e}")
        
         if not new_rows_data: return
  
@@ -220,7 +262,7 @@ def upload_batch_data(file_paths_list):
        
         if existing_df.empty:
             sheet.update([df_new.columns.tolist()] + df_new.values.tolist())
-            print(f"✅ Initialized Sheet with {len(df_new)} rows.")
+            print(f" Initialized Sheet with {len(df_new)} rows.")
             return
  
         # 5. Row-by-Row Upsert Logic
@@ -229,7 +271,7 @@ def upload_batch_data(file_paths_list):
         except:
             existing_companies = []
  
-        headers = sheet.row_values(1)
+        headers = ensure_sheet_headers(sheet, REQUIRED_COLUMNS)
        
         for index, row in df_new.iterrows():
             company_name = row.get("company_profile_company_name", "Unknown")
@@ -242,27 +284,27 @@ def upload_batch_data(file_paths_list):
  
                 row_idx = existing_companies.index(company_name) + 1
  
-                # 1️⃣ Fetch existing row values
+                #  Fetch existing row values
                 existing_row_values = sheet.row_values(row_idx)
  
-                # 2️⃣ Pad existing row if shorter than headers
+                #  Pad existing row if shorter than headers
                 if len(existing_row_values) < len(headers):
                     existing_row_values += [""] * (len(headers) - len(existing_row_values))
  
-                # 3️⃣ Merge: keep old values if new is empty
+                #  Merge: keep old values if new is empty
                 merged_row = []
                 for i, header in enumerate(headers):
                     new_val = row.get(header, "")
                     old_val = existing_row_values[i]
                     merged_row.append(new_val if new_val != "" else old_val)
  
-                # 4️⃣ Update merged row
+                #  Update merged row
                 sheet.update(f"A{row_idx}", [merged_row])
             else:
                 # APPEND New Row
                 sheet.append_row(row_values_ordered)
  
-        print(f"✅ Batch Upload Complete: Processed {len(file_paths_list)} files.")
+        print(f" Batch Upload Complete: Processed {len(file_paths_list)} files.")
  
     except Exception as e:
         print(f"❌ Batch Upload Failed: {e}")
