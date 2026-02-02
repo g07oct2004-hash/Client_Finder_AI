@@ -26,13 +26,18 @@ COMPANY_INTEL_FILE = os.path.join(
     "Final_Company_Data_by_simple_approach.json"
 )
 
-@st.cache_data
-def load_company_intel():
-    if os.path.exists(COMPANY_INTEL_FILE):
-        with open(COMPANY_INTEL_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+import copy
 
+def get_file_mtime(path: str) -> float:
+    return os.path.getmtime(path) if os.path.exists(path) else 0.0
+
+
+def load_company_intel(path) -> dict:
+    with open(COMPANY_INTEL_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # 🔒 CRITICAL: prevent mutation bugs
+    return copy.deepcopy(data)
 
 
 if 'show_leads' not in st.session_state:
@@ -779,10 +784,13 @@ def detect_need(text):
         return "Ongoing Salesforce Support"
 
     return "Salesforce Expansion"
+
+
+
 def final_lead_score_salesforce(row, intel, revenue_q, size_q):
     score = 0
     breakdown = []
-
+    
     company = row["Company"]
 
     # ===============================
@@ -1025,7 +1033,7 @@ with st.sidebar:
    
     target = st.slider(
         "🎯 Target Leads Count",
-        min_value=10,
+        min_value=1,
         max_value=max_limit,
         value=st.session_state.get("target_count", 50),
         key="target_slider"
@@ -1335,7 +1343,8 @@ if st.session_state.df is not None:
             enrich_companies_from_list(companies)
 
         with st.spinner("📊 Recalculating lead scores..."):
-            intel = load_company_intel()
+            intel = load_company_intel(get_file_mtime(COMPANY_INTEL_FILE))
+
 
             scores = company_df.apply(
                 lambda r: final_lead_score_salesforce(
@@ -1444,7 +1453,6 @@ if st.session_state.df is not None:
     # --- DOWNLOAD ---
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(label="📥 Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
-
 
 
 
