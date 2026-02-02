@@ -537,33 +537,69 @@ def get_leads_adzuna(q, loc, date_f, type_f, limit):
                 break
     return all_jobs
 import re
+
 def normalize_revenue(rev):
+    """
+    Normalize revenue strings to USD MILLIONS (float)
+
+    Handles:
+    - $5M, $5 million, 5m
+    - $4.9B – $5.1B (takes midpoint)
+    - ₹1000 crores, 1000 cr, 1000 crores+
+    - € / £ (treated as USD approx)
+    - noisy text, ranges, plus signs
+    """
+
     if not rev or not isinstance(rev, str):
         return None
 
-    r = rev.lower().replace(",", "").strip()
+    r = rev.lower()
+    r = r.replace(",", "").replace("+", "").replace("approx", "").replace("~", "")
+    r = r.strip()
 
-    try:
-        # INR Crores
-        if "₹" in r and "cr" in r:
-            return float(r.split("₹")[1].split("cr")[0].strip()) * 0.12
-
-        # $14.37B or $14.37b
-        if re.search(r"\$\d+(\.\d+)?b", r):
-            return float(r.replace("$", "").replace("b", "")) * 1000
-
-        # $670.4 million
-        if "million" in r:
-            return float(r.split()[0])
-
-        # $55.3 billion
-        if "billion" in r:
-            return float(r.split()[0]) * 1000
-
-    except:
+    # -----------------------------
+    # Extract all numeric values
+    # -----------------------------
+    numbers = re.findall(r"\d+(?:\.\d+)?", r)
+    if not numbers:
         return None
 
+    nums = [float(n) for n in numbers]
+
+    # If range exists → take midpoint
+    value = sum(nums) / len(nums)
+
+    # -----------------------------
+    # Currency & unit detection
+    # -----------------------------
+
+    # INR Crores / Lakhs
+    if "crore" in r or "cr" in r:
+        return value * 0.12   # 1 crore ≈ 0.12M USD
+
+    if "lakh" in r:
+        return value * 0.0012  # 1 lakh ≈ 0.0012M USD
+
+    # Billion
+    if "billion" in r or re.search(r"\bb\b", r):
+        return value * 1000
+
+    # Million
+    if "million" in r or re.search(r"\bm\b", r):
+        return value
+
+    # Explicit currency but no unit → assume millions
+    if any(c in r for c in ["$", "€", "£"]):
+        return value
+
+    # Fallback heuristic
+    # If number is very large, assume it's already in millions
+    if value > 1000:
+        return value
+
     return None
+
+
 
 
 def normalize_employee_count(val):
@@ -743,39 +779,74 @@ def detect_need(text):
         return "Ongoing Salesforce Support"
 
     return "Salesforce Expansion"
-def final_lead_score_salesforce(row, intel):
+def final_lead_score_salesforce(row, intel, revenue_q, size_q):
     score = 0
     breakdown = []
 
-    # 1️ Job volume score
-    volume_score = job_volume_score(row["Open_Roles"])
+    company = row["Company"]
+
+    # ===============================
+    # SAFETY: Company must exist in intel
+    # ===============================
+    if company not in intel:
+        return 0, " No company intelligence found"
+
+    # ===============================
+    # NORMALIZE COMPANY DATA
+    # ===============================
+    rev = normalize_revenue(intel[company].get("Annual Revenue"))
+    emp = normalize_employee_count(
+        intel[company].get("Total Employee Count")
+    )
+
+    # ===============================
+    # HARD FILTER: REVENUE
+    # ===============================
+    if revenue_q != "Any":
+        rev_score = revenue_match_score(rev, revenue_q)
+        if rev_score == 0:
+            return 0, f" Revenue outside selected range ({revenue_q})"
+        breakdown.append(f"+{rev_score} (Revenue Match)")
+        score += rev_score
+
+    # ===============================
+    # HARD FILTER: EMPLOYEE SIZE
+    # ===============================
+    if size_q != "Any":
+        emp_match = employee_match_score(emp, size_q)
+        if emp_match == 0:
+            return 0, f" Employee size outside selected range ({size_q})"
+        breakdown.append(f"+{emp_match} (Employee Size Match)")
+        score += emp_match
+
+    # ===============================
+    # 1️⃣ JOB VOLUME SCORE (FIXED)
+    # ===============================
+    open_roles = int(row.get("Open_Roles", 0))
+    volume_score = min(open_roles * 5, 20)  # 2 jobs = 10 points
     score += volume_score
     breakdown.append(f"+{volume_score} (Job Volume)")
 
-    # 2️ Salesforce Cloud relevance
+    # ===============================
+    # 2️⃣ SALESFORCE CLOUD RELEVANCE
+    # ===============================
     cloud_score = salesforce_cloud_score(row.get("Job_Roles", []))
     if cloud_score > 0:
         score += cloud_score
         breakdown.append(f"+{cloud_score} (Salesforce Clouds)")
 
-    # 3️ Job freshness
+    # ===============================
+    # 3️⃣ JOB FRESHNESS
+    # ===============================
     freshness = row.get("Freshness Score", 0)
     if freshness > 0:
         score += freshness
         breakdown.append(f"+{freshness} (Freshness)")
 
-    # 4️ Employee size
-    company = row["Company"]
-    if company in intel:
-        emp_score = employee_size_score(
-            intel[company].get("Total Employee Count")
-        )
-        if emp_score > 0:
-            score += emp_score
-            breakdown.append(f"+{emp_score} (Employee Size)")
-
+    # ===============================
+    # FINAL SCORE
+    # ===============================
     return min(score, 100), " | ".join(breakdown)
-
 
 def calculate_lead_score(row):
     score = 0
@@ -794,50 +865,56 @@ def calculate_lead_score(row):
     return min(score, 100)
 
 def update_structured_json_with_scores(company_df, structured_dir="structured_data"):
+    from pathlib import Path
+    import json
+
     structured_dir = Path(structured_dir)
 
-    #  SAFETY CHECK
     if not structured_dir.exists():
-        print(f" structured directory not found: {structured_dir}")
-        print(" Skipping structured JSON score update")
+        print(f"❌ structured directory not found: {structured_dir}")
         return
 
+    # Build lookup from Streamlit dataframe
     score_map = {
         row["Company"].strip().lower(): {
             "lead_score": float(row["Lead Score"]),
             "rank_breakout": row["Rank (Breakout)"]
         }
         for _, row in company_df.iterrows()
+        if pd.notna(row["Company"])
     }
 
     updated = 0
 
     for file in structured_dir.glob("*_Structured.json"):
         try:
-            with file.open("r", encoding="utf-8") as f:
+            with open(file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            meta_name = (
-                data.get("meta", {})
-                .get("company_name", "")
-                .strip()
-                .lower()
-            )
+            # 🔑 FIX: fallback name resolution
+            company_name = (
+                data.get("meta_company_name")
+                or data.get("company_profile_company_name")
+                or data.get("meta", {}).get("company_name")
+                or ""
+            ).strip().lower()
 
-            if not meta_name or meta_name not in score_map:
+            if not company_name or company_name not in score_map:
                 continue
 
-            data["lead_scoring"] = score_map[meta_name]
+            # Inject scoring
+            data["lead_scoring"] = score_map[company_name]
 
-            with file.open("w", encoding="utf-8") as f:
+            with open(file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
 
             updated += 1
 
         except Exception as e:
-            print(f" Failed updating {file.name}: {e}")
+            print(f"❌ Failed updating {file.name}: {e}")
 
-    print(f" Lead scoring injected into {updated} structured JSON files")
+    print(f"✅ Lead scoring injected into {updated} structured JSON files")
+
 
 
 def job_volume_score(open_roles):
@@ -1261,7 +1338,9 @@ if st.session_state.df is not None:
             intel = load_company_intel()
 
             scores = company_df.apply(
-                lambda r: final_lead_score_salesforce(r, intel),
+                lambda r: final_lead_score_salesforce(
+                    r, intel, revenue_q, company_size_q
+                ),
                 axis=1,
                 result_type="expand"
             )
@@ -1282,7 +1361,7 @@ if st.session_state.df is not None:
         )
 
         if st.session_state.show_leads:
-            qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+            qualified_companies = get_high_score_companies(company_df, threshold=12)#15
 
             st.markdown("### 🧠 Deep Company Intelligence")
             st.write(f"Qualified Companies: {len(qualified_companies)}")
