@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -1324,6 +1325,14 @@ if st.session_state.df is not None:
             )
         st.markdown("### 🔍 Lead Filtering")
         # This button now works because the data is in session_state!
+        qualification_threshold = st.number_input(
+            "🏆 Qualification Threshold",
+            min_value=0, 
+            max_value=100, 
+            value=25,   # Default set to 25
+            step=1,     
+            help="Companies with a Lead Score below this value will be excluded"
+        )
         if st.button("🔍 Start Filtering"):
             st.session_state.show_leads = True
 
@@ -1370,7 +1379,8 @@ if st.session_state.df is not None:
         )
 
         if st.session_state.show_leads:
-            qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+            # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+            qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
 
             st.markdown("### 🧠 Deep Company Intelligence")
             st.write(f"Qualified Companies: {len(qualified_companies)}")
@@ -1453,6 +1463,7 @@ if st.session_state.df is not None:
     # --- DOWNLOAD ---
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(label="📥 Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
 
 
 
