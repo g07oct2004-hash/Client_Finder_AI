@@ -584,7 +584,7 @@ from fake_useragent import UserAgent
 from duckduckgo_search import DDGS
 from dotenv import load_dotenv
 from itertools import cycle
-
+from API_rotation import get_groq_key,get_groq_count
 # Load environment variables
 load_dotenv()
 
@@ -734,10 +734,15 @@ def analyze_with_groq(company, raw_data):
     Uses ONE Groq API key per call.
     Automatically rotates keys using round-robin.
     """
-
-    for _ in range(len(GROQ_KEYS)):
+    # 1. Get the total count of keys from the manager
+    total_keys = get_groq_count()
+    
+    # Safety: Ensure we try at least once even if count returns 0 (unlikely)
+    max_retries = max(1, total_keys)
+    for _ in range(max_retries):
         try:
-            api_key = next(GROQ_KEY_ROTATOR)
+            # api_key = next(GROQ_KEY_ROTATOR)
+            api_key = get_groq_key()
             client = Groq(api_key=api_key)
 
             completion = client.chat.completions.create(

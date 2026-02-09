@@ -10,7 +10,8 @@ from gspread.utils import rowcol_to_a1
 # --- CONFIGURATION ---
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
-GOOGLE_SHEET_NAME = "Company_data"
+# GOOGLE_SHEET_NAME = "Company_data"
+GOOGLE_SHEET_NAME = "Email_tool"
 
 # Variable get karo
 SERVICE_ACCOUNT_RAW = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -24,29 +25,44 @@ MAX_CELL_CHARS = 49000
 # ============================================================
 
 
+# REQUIRED_COLUMNS = [
+#     "meta_company_name",
+#     "meta_generated_at",
+#     "company_profile_company_name",
+#     "company_profile_website",
+#     "company_profile_industry",
+#     "company_profile_tagline",
+#     "leadership_team_founders",
+#     "leadership_team_board_members",
+#     "leadership_team_key_people",
+#     "competitors",
+#     "news",
+#     "financials_estimated_revenue_usd",
+#     "locations",
+#     "contact_information_emails",
+#     "contact_information_phone_numbers",
+#     "Funding Status",
+#     "AI Strategic Summary",
+#     "lead_scoring_lead_score",
+#     "lead_scoring_rank_breakout",
+# ]
+
 REQUIRED_COLUMNS = [
     "meta_company_name",
     "meta_generated_at",
-    "company_profile_company_name",
+    "search_context_target_job_role",
+    "search_context_target_location",
     "company_profile_website",
-    "company_profile_industry",
-    "company_profile_tagline",
-    "leadership_team_founders",
-    "leadership_team_board_members",
-    "leadership_team_key_people",
-    "competitors",
-    "news",
-    "financials_estimated_revenue_usd",
-    "locations",
-    "contact_information_emails",
-    "contact_information_phone_numbers",
-    "Funding Status",
-    "AI Strategic Summary",
+    "financial_intelligence",
+    "market_updates",
     "lead_scoring_lead_score",
     "lead_scoring_rank_breakout",
+    "AI Strategic Summary",
+    "Email Subject",   
+    "Email Body",
+    "found_job_titles",
+    "open_roles_count"      
 ]
-
-
 def ensure_sheet_headers(sheet, required_headers):
     """
     Ensures all required headers exist in row 1.
@@ -69,9 +85,23 @@ def ensure_sheet_headers(sheet, required_headers):
     return existing_headers
 
 
+# def truncate_cell(value):
+#     if isinstance(value, str) and len(value) > MAX_CELL_CHARS:
+#         return value[:MAX_CELL_CHARS] + "… [TRUNCATED]"
+#     return value
 def truncate_cell(value):
-    if isinstance(value, str) and len(value) > MAX_CELL_CHARS:
-        return value[:MAX_CELL_CHARS] + "… [TRUNCATED]"
+    if isinstance(value, str):
+        # 1. New Lines (\n) ko " | " se replace karo taaki row height na badhe
+        clean_value = value.replace("\n", " | ").replace("\r", "")
+        
+        # 2. Extra spaces ko single space kar do (Optional cleanup)
+        clean_value = " ".join(clean_value.split())
+
+        # 3. Max length check
+        if len(clean_value) > MAX_CELL_CHARS:
+            return clean_value[:MAX_CELL_CHARS] + "… [TRUNCATED]"
+        return clean_value
+        
     return value
 
 def flatten_json(data, parent_key="", sep="_"):

@@ -8,6 +8,7 @@ import logging
 import requests
 import time
 import asyncio
+from instantly_mail_send import *
 import os
 from company_intel import enrich_companies_from_list
 from deep_company_research import run_deep_research_for_companies
@@ -16,7 +17,11 @@ from upload_to_sheets import upload_batch_data
 from lead_scoring import run_ai_strategic_layer
 import json
 from pathlib import Path
-
+from API_rotation import get_serpapi_key,get_serpapi_count
+from email_generation import run_email_generation_layer
+from Data_Enrichment import run_data_enrichment
+from email_generation import connect_to_sheet, GOOGLE_SHEET_NAME
+import gspread
 SEEN_JOBS_FILE = "seen_jobs.json"
 
 if "show_old_jobs" not in st.session_state:
@@ -218,13 +223,15 @@ def extract_country(location_str):
         return {"USA": "United States", "UK": "United Kingdom", "UAE": "UAE", "KSA": "Saudi Arabia"}.get(last, last.title())
     return last.title() if len(parts) > 1 else "Unknown"
 
-# ================= SERPAPI (Google Jobs) - WITH FILTERS =================
+# # ================= SERPAPI (Google Jobs) - WITH FILTERS =================
+
+
 def get_leads_serpapi(q, loc, date_f, type_f, limit):
     detected_country = detect_search_country(loc)
     gl, hl = COUNTRY_GL_HL_MAP.get(detected_country, ("us", "en"))
 
     all_jobs, seen = [], set()
-    api_index, token = 0, None
+    token = None
 
     # Handle Chips (Filters)
     chips = []
@@ -234,7 +241,16 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
         chips.append(f"employment_type:{type_f}")
     chips_q = ",".join(chips) if chips else None
 
-    while len(all_jobs) < limit and api_index < len(SERPAPI_KEYS):
+    # Loop until we hit the limit
+    while len(all_jobs) < limit:
+        
+        # 1. Get a fresh key from the manager
+        try:
+            current_api_key = get_serpapi_key()
+        except ValueError as e:
+            logger.error(f"SerpAPI Key Error: {e}")
+            break 
+
         params = {
             "engine": "google_jobs",
             "q": q,
@@ -242,24 +258,33 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
             "gl": gl,
             "hl": hl,
             "chips": chips_q,
-            "api_key": SERPAPI_KEYS[api_index],
-            "no_cache": False  #  Parameter added here to force fresh results
+            "api_key": current_api_key, # <--- Dynamic Key
+            "no_cache": False
         }
         
         if token:
             params["next_page_token"] = token
-            # Note: docs suggest no_cache and next_page_token can be used, 
-            # but usually, the first request is where no_cache matters most.
 
         try:
             search = GoogleSearch(params)
             res = search.get_dict()
+            
+            # Check for API-side errors (like invalid key or quota limit)
+            if "error" in res:
+                logger.warning(f"SerpAPI Key Failed: {res['error']}")
+                time.sleep(1) # Wait briefly before rotating to next key
+                continue
+
             jobs = res.get("jobs_results", [])
 
+            # Logic: If no jobs found, try next key (rotation happens automatically on next loop)
             if not jobs:
-                api_index += 1
-                token = None
-                continue
+                if not token:
+                    # If no jobs and no next page, we are likely done.
+                    # But optionally, you can 'continue' here to try one more key just in case.
+                    break 
+                else:
+                    continue
 
             for j in jobs:
                 key = f"{j.get('title')}-{j.get('company_name')}-{j.get('location')}"
@@ -285,11 +310,12 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
 
             # Handle Pagination
             token = res.get("serpapi_pagination", {}).get("next_page_token")
-            if not token:
-                api_index += 1
+            if not token and len(jobs) < 10:
+                break 
+
         except Exception as e:
             logger.error(f"SerpAPI error: {e}")
-            api_index += 1
+            time.sleep(1) # Wait before retrying (which will grab a new key)
 
     return all_jobs
 # ================= LINKEDIN (RapidAPI) - WITH JOB TYPE FILTER =================
@@ -873,21 +899,25 @@ def calculate_lead_score(row):
     score += intent_bonus.get(row["Detected Need"], 0)
     return min(score, 100)
 
-def update_structured_json_with_scores(company_df, structured_dir="structured_data"):
+
+def update_structured_json_with_scores(company_df, search_job_role, search_location, structured_dir="structured_data"):
     from pathlib import Path
     import json
 
     structured_dir = Path(structured_dir)
 
     if not structured_dir.exists():
-        print(f"❌ structured directory not found: {structured_dir}")
+        os.makedirs(structured_dir, exist_ok=True)
         return
 
-    # Build lookup from Streamlit dataframe
+    # --- UPDATED: Build lookup to include Open Roles ---
     score_map = {
         row["Company"].strip().lower(): {
             "lead_score": float(row["Lead Score"]),
-            "rank_breakout": row["Rank (Breakout)"]
+            "rank_breakout": row["Rank (Breakout)"],
+            "specific_jobs": row["Job_Roles"],
+            # NEW: Add Open Roles Count here
+            "open_roles": int(row["Open_Roles"]) 
         }
         for _, row in company_df.iterrows()
         if pd.notna(row["Company"])
@@ -900,7 +930,6 @@ def update_structured_json_with_scores(company_df, structured_dir="structured_da
             with open(file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # 🔑 FIX: fallback name resolution
             company_name = (
                 data.get("meta_company_name")
                 or data.get("company_profile_company_name")
@@ -911,8 +940,31 @@ def update_structured_json_with_scores(company_df, structured_dir="structured_da
             if not company_name or company_name not in score_map:
                 continue
 
-            # Inject scoring
-            data["lead_scoring"] = score_map[company_name]
+            # 1. Inject Search Context
+            data["search_context"] = {
+                "target_job_role": search_job_role,
+                "target_location": search_location
+            }
+
+            # 2. Inject Scoring
+            data["lead_scoring"] = {
+                "lead_score": score_map[company_name]["lead_score"],
+                "rank_breakout": score_map[company_name]["rank_breakout"]
+            }
+
+            # 3. Inject Specific Job Titles
+            job_list = score_map[company_name]["specific_jobs"]
+            if isinstance(job_list, list):
+                job_string = ", ".join(job_list)
+            else:
+                job_string = str(job_list)
+            
+            data["found_job_titles"] = job_string
+
+            # --- 4. NEW: Inject Open Roles Count ---
+           
+            data["open_roles_count"] = score_map[company_name]["open_roles"]
+            # ---------------------------------------
 
             with open(file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -920,12 +972,9 @@ def update_structured_json_with_scores(company_df, structured_dir="structured_da
             updated += 1
 
         except Exception as e:
-            print(f"❌ Failed updating {file.name}: {e}")
+            print(f" Failed updating {file.name}: {e}")
 
-    print(f"✅ Lead scoring injected into {updated} structured JSON files")
-
-
-
+    print(f" Context, Jobs, Open Roles & Scoring injected into {updated} structured JSON files")
 def job_volume_score(open_roles):
     if open_roles <= 2:
         return 5
@@ -998,6 +1047,74 @@ def load_uploaded_companies(uploaded_file):
         st.error(f"❌ Failed to read uploaded file: {e}")
         return []
 
+#----------New Logic code ---------------------
+
+# ================= NEW: SYNC ENRICHED DATA TO SHEETS =================
+def update_sheet_with_enriched_data(uploaded_df):
+    """
+    Updates Google Sheet with verified CEO Name and Email ID from user's CSV.
+    """
+    gc = connect_to_sheet()
+    if not gc:
+        st.error(" Failed to connect to Google Sheets.")
+        return False
+
+    try:
+        sh = gc.open(GOOGLE_SHEET_NAME)
+        worksheet = sh.sheet1
+        
+        # Get all existing records to map rows
+        sheet_data = worksheet.get_all_records()
+        if not sheet_data:
+            st.warning(" Google Sheet is empty.")
+            return False
+            
+        # Create a mapping of Company Name -> Row Number (starting at 2 due to header)
+        # Assuming column name in Sheet is 'meta_company_name' or 'Company'
+        company_row_map = {}
+        for idx, row in enumerate(sheet_data):
+            c_name = str(row.get("meta_company_name", "") or row.get("Company", "")).strip().lower()
+            if c_name:
+                company_row_map[c_name] = idx + 2  # +2 because gspread is 1-indexed and row 1 is header
+
+        # Find or Create Columns for 'CEO Name' and 'Email ID'
+        headers = worksheet.row_values(1)
+        
+        if "CEO Name" not in headers:
+            worksheet.update_cell(1, len(headers) + 1, "CEO Name")
+            headers.append("CEO Name")
+            
+        if "Email ID" not in headers:
+            worksheet.update_cell(1, len(headers) + 1, "Email ID")
+            headers.append("Email ID")
+
+        ceo_col_idx = headers.index("CEO Name") + 1
+        email_col_idx = headers.index("Email ID") + 1
+
+        # Iterate through uploaded CSV and update Sheet
+        updates = 0
+        for _, row in uploaded_df.iterrows():
+            company = str(row.get("Company_Name", "")).strip().lower()
+            ceo_name = str(row.get("CEO_Full_Name", "")).strip()
+            email = str(row.get("Email_ID", "")).strip()
+
+            # Skip if no email provided (optional, depends on your logic)
+            if not email: 
+                continue
+
+            if company in company_row_map:
+                row_num = company_row_map[company]
+                # Update cells
+                worksheet.update_cell(row_num, ceo_col_idx, ceo_name)
+                worksheet.update_cell(row_num, email_col_idx, email)
+                updates += 1
+                time.sleep(1) # Rate limit safety
+        
+        return updates
+
+    except Exception as e:
+        st.error(f" Error updating sheet: {e}")
+        return 0
 
 
 ## ================= SIDEBAR (PROFESSIONAL STATE MANAGEMENT) =================
@@ -1368,7 +1485,8 @@ if st.session_state.df is not None:
             company_df["Rank (Breakout)"] = scores[1]
 
             company_df = company_df.sort_values("Lead Score", ascending=False)
-            update_structured_json_with_scores(company_df)
+            # update_structured_json_with_scores(company_df)
+            update_structured_json_with_scores(company_df, job_q, loc_q)
         st.success("✅ Intelligence enrichment & ranking complete")
 
         st.dataframe(
@@ -1378,94 +1496,524 @@ if st.session_state.df is not None:
             use_container_width=True
         )
 
-        if st.session_state.show_leads:
-            # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
-            qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+        # if st.session_state.show_leads:
+    #         # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+    #         qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
 
+    #         st.markdown("### 🧠 Deep Company Intelligence")
+    #         st.write(f"Qualified Companies: {len(qualified_companies)}")
+
+    #         if st.button("🚀 Generate Deep Company Reports"):
+    #             progress_text = st.empty()
+    #             progress_bar = st.progress(0)
+
+    #             # -------------------------------
+    #             # STEP 1: Deep Research
+    #             # -------------------------------
+    #             progress_text.text("🔍 Running deep company research...")
+    #             progress_bar.progress(10)
+
+    #             asyncio.run(run_deep_research_for_companies(qualified_companies))
+
+    #             progress_bar.progress(50)
+
+    #             # -------------------------------
+    #             # STEP 2: Cleaning
+    #             # -------------------------------
+    #             # progress_text.text("🧹 Cleaning & structuring company intelligence...")
+    #             # clean_all_unstructured_reports(
+    #             #     unstructured_dir="Unstructured_data",
+    #             #     structured_dir="structured_data"
+    #             # )
+
+    #             # progress_bar.progress(80)
+
+    #             # update_structured_json_with_scores(company_df)
+
+    #             # # -------------------------------
+    #             # # STEP 3: Upload to Sheets
+    #             # # -------------------------------
+    #             # progress_text.text(" Uploading structured data to Google Sheets...")
+    #             # upload_structured_folder_to_sheets()
+
+
+    #             progress_text.text(" Cleaning & structuring company intelligence...")
+    #             asyncio.run(clean_all_unstructured_reports_async(
+    #                 unstructured_dir="Unstructured_data",
+    #                 structured_dir="structured_data"
+    #             ))
+
+    #             progress_bar.progress(80)
+
+    #             update_structured_json_with_scores(company_df, job_q, loc_q)
+
+    #             # # -------------------------------
+    #             # # STEP 3: Upload to Sheets
+    #             # # -------------------------------
+    #             # progress_text.text(" Uploading structured data to Google Sheets...")
+    #             # #------------------------------------
+    #             # struct_p = Path("structured_data")
+    #             # all_struct_files = list(struct_p.glob("*_Structured.json"))
+                
+    #             # if all_struct_files:
+    #             #     upload_batch_data(all_struct_files)
+    #             # else:
+    #             #     st.error(" No files found in structured_data folder.")
+
+    #             # progress_bar.progress(70)
+    #             # progress_text.text(" Generating AI Strategic Summaries...")
+    #             # run_ai_strategic_layer()
+
+    #             # # --- NEW CODE BLOCK STARTS HERE ---
+    #             # progress_bar.progress(85)
+    #             # progress_text.text(" Drafting Personalized Emails...")
+                
+    #             # try:
+    #             #     run_email_generation_layer()
+    #             #     st.success(" Emails generated and added to Google Sheets!")
+    #             # except Exception as e:
+    #             #     st.error(f" Email generation failed: {e}")
+    #             # # --- NEW CODE BLOCK ENDS HERE ---
+
+    #             # progress_bar.progress(100)
+    #             # progress_text.text(" Pipeline completed successfully!")
+
+    #             # st.success(" Deep research → structured data → Google Sheets upload completed!")
+
+    #             # with st.spinner(" Generating AI Strategic Summaries..."):
+    #             #     run_ai_strategic_layer()
+
+    #             # st.success(" AI Strategic summaries added to Google Sheets")
+
+    #             # -------------------------------
+    #             # STEP 3: Upload to Sheets
+    #             # -------------------------------
+    #             progress_text.text(" Uploading structured data to Google Sheets...")
+                
+    #             struct_p = Path("structured_data")
+    #             all_struct_files = list(struct_p.glob("*_Structured.json"))
+                
+    #             if all_struct_files:
+    #                 upload_batch_data(all_struct_files)
+    #             else:
+    #                 st.error(" No files found in structured_data folder.")
+
+    #             # Run AI Strategic Layer
+    #             progress_bar.progress(70)
+    #             progress_text.text(" Generating AI Strategic Summaries...")
+    #             run_ai_strategic_layer()
+
+    #             # ---------------------------------------------------------
+    #             # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+    #             # ---------------------------------------------------------
+                
+    #             progress_bar.progress(85)
+    #             progress_text.text("🧠 Extracting CEO & Contact Info...")
+                
+    #             # Run the enrichment script to create the CSV for verification
+    #             csv_path = asyncio.run(run_data_enrichment())
+                
+    #             progress_bar.progress(100)
+
+    #             if csv_path and "Failed" not in csv_path:
+    #                 st.success(" Phase 1 Complete! Data available for verification below.")
+    #                 st.balloons()
+                    
+    #                 # 🔒 LOCK THE STATE: This makes the Download Button appear in the next section
+    #                 st.session_state.enrichment_ready = True
+    #                 st.session_state.enrichment_csv = csv_path
+    #             else:
+    #                 st.error(" Data Enrichment Failed. Check logs.")
+
+    #             # ---------------------------------------------------------
+    #             # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+    #             # ---------------------------------------------------------
+
+
+
+
+
+    # # --- DOWNLOAD ---
+    # csv = df.to_csv(index=False).encode("utf-8")
+    # st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
+
+
+
+
+    #     if st.session_state.show_leads:
+    #     # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+    #         qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+
+    #         st.markdown("### 🧠 Deep Company Intelligence")
+    #         st.write(f"Qualified Companies: {len(qualified_companies)}")
+
+    #         # --- MAIN PROCESS BUTTON ---
+    #         if st.button("🚀 Generate Deep Company Reports"):
+    #             progress_text = st.empty()
+    #             progress_bar = st.progress(0)
+
+    #             # -------------------------------
+    #             # STEP 1: Deep Research
+    #             # -------------------------------
+    #             progress_text.text("🔍 Running deep company research...")
+    #             progress_bar.progress(10)
+
+    #             asyncio.run(run_deep_research_for_companies(qualified_companies))
+
+    #             progress_bar.progress(40)
+
+    #             # -------------------------------
+    #             # STEP 2: Cleaning & Structuring
+    #             # -------------------------------
+    #             progress_text.text("🧹 Cleaning & structuring company intelligence...")
+    #             asyncio.run(clean_all_unstructured_reports_async(
+    #                 unstructured_dir="Unstructured_data",
+    #                 structured_dir="structured_data"
+    #             ))
+
+    #             progress_bar.progress(60)
+
+    #             # Update JSONs with Streamlit scores
+    #             update_structured_json_with_scores(company_df, job_q, loc_q)
+
+    #             # -------------------------------
+    #             # STEP 3: Upload to Sheets & AI Summary
+    #             # -------------------------------
+    #             progress_text.text("📤 Uploading structured data to Google Sheets...")
+                
+    #             struct_p = Path("structured_data")
+    #             all_struct_files = list(struct_p.glob("*_Structured.json"))
+                
+    #             if all_struct_files:
+    #                 upload_batch_data(all_struct_files)
+    #             else:
+    #                 st.error("⚠️ No files found in structured_data folder.")
+
+    #             # Run AI Strategic Layer
+    #             progress_bar.progress(70)
+    #             progress_text.text("🤖 Generating AI Strategic Summaries...")
+    #             run_ai_strategic_layer()
+
+    #             # ---------------------------------------------------------
+    #             # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+    #             # ---------------------------------------------------------
+                
+    #             progress_bar.progress(85)
+    #             progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
+                
+    #             # Run the enrichment script to create the CSV for verification
+    #             csv_path = asyncio.run(run_data_enrichment())
+                
+    #             progress_bar.progress(100)
+
+    #             if csv_path and "Failed" not in csv_path:
+    #                 st.success("✅ Phase 1 Complete! Data available for verification below.")
+    #                 # st.balloons()
+                    
+    #                 # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
+    #                 st.session_state.enrichment_ready = True
+    #                 st.session_state.enrichment_csv = csv_path
+    #             else:
+    #                 st.error("❌ Data Enrichment Failed. Check logs.")
+
+    #             # ---------------------------------------------------------
+    #             # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+    #             # ---------------------------------------------------------
+
+
+    #         # ---------------------------------------------------------
+    #         # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+    #         # ---------------------------------------------------------
+    #         st.divider()
+    #         st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+
+    #         # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+    #         if st.session_state.get("enrichment_ready"):
+    #             st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+                
+    #             # Load CSV to show preview
+    #             try:
+    #                 if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+    #                     enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+    #                     st.dataframe(enrich_df.head(), use_container_width=True)
+                        
+    #                     with open(st.session_state.enrichment_csv, "rb") as f:
+    #                         st.download_button(
+    #                             label="📥 Download Enriched Data (CSV)",
+    #                             data=f,
+    #                             file_name="Enriched_Leads_For_Verification.csv",
+    #                             mime="text/csv"
+    #                         )
+    #                 else:
+    #                     st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+    #             except Exception as e:
+    #                 st.warning(f"Could not read generated CSV: {e}")
+
+    #         # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+    #         st.markdown("### 📤 Upload Verified Data to Start Emailing")
+    #         verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+
+    #         if verified_file:
+    #             if st.button("🚀 Sync Data & Generate Emails"):
+    #                 progress_text = st.empty()
+    #                 progress_bar = st.progress(0)
+                    
+    #                 try:
+    #                     # 1. Read File
+    #                     verified_df = pd.read_csv(verified_file)
+                        
+    #                     # 2. Check columns
+    #                     cols = [c.strip() for c in verified_df.columns]
+    #                     if "Email_ID" not in cols:
+    #                         st.error("❌ File must have an 'Email_ID' column.")
+    #                         st.stop()
+                        
+    #                     # 3. Update Google Sheet
+    #                     progress_text.text("🔄 Syncing verified data to Google Sheets...")
+    #                     progress_bar.progress(30)
+                        
+    #                     updated_count = update_sheet_with_enriched_data(verified_df)
+                        
+    #                     if updated_count > 0:
+    #                         st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+    #                     else:
+    #                         st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                        
+    #                     # 4. Generate Emails
+    #                     progress_text.text("✍️ AI is writing personalized emails...")
+    #                     progress_bar.progress(60)
+                        
+    #                     run_email_generation_layer()
+                        
+    #                     progress_bar.progress(100)
+    #                     st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+    #                     # st.balloons()
+
+    #                     # 2. Direct Authority aur Link ki guide dikhayein
+    #                     st.info(" Note: Make sure your email has access to this sheet.")
+
+    #                     # 3. Final Button
+    #                     st.link_button(
+    #                         label="📊 Open Google Sheet", 
+    #                         url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+    #                         type="primary"
+    #                     )
+                        
+    #                 except Exception as e:
+    #                     st.error(f"❌ An error occurred: {e}")
+
+    #         st.divider()
+
+    # # --- ORIGINAL DOWNLOAD BUTTON ---
+    # csv = df.to_csv(index=False).encode("utf-8")
+    # st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+         
+
+        if st.session_state.show_leads:
+        # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+            qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+ 
             st.markdown("### 🧠 Deep Company Intelligence")
             st.write(f"Qualified Companies: {len(qualified_companies)}")
-
+ 
+            # --- MAIN PROCESS BUTTON ---
             if st.button("🚀 Generate Deep Company Reports"):
                 progress_text = st.empty()
                 progress_bar = st.progress(0)
-
+ 
                 # -------------------------------
                 # STEP 1: Deep Research
                 # -------------------------------
                 progress_text.text("🔍 Running deep company research...")
                 progress_bar.progress(10)
-
+ 
                 asyncio.run(run_deep_research_for_companies(qualified_companies))
-
-                progress_bar.progress(50)
-
+ 
+                progress_bar.progress(40)
+ 
                 # -------------------------------
-                # STEP 2: Cleaning
+                # STEP 2: Cleaning & Structuring
                 # -------------------------------
-                # progress_text.text("🧹 Cleaning & structuring company intelligence...")
-                # clean_all_unstructured_reports(
-                #     unstructured_dir="Unstructured_data",
-                #     structured_dir="structured_data"
-                # )
-
-                # progress_bar.progress(80)
-
-                # update_structured_json_with_scores(company_df)
-
-                # # -------------------------------
-                # # STEP 3: Upload to Sheets
-                # # -------------------------------
-                # progress_text.text("📤 Uploading structured data to Google Sheets...")
-                # upload_structured_folder_to_sheets()
-
-
                 progress_text.text("🧹 Cleaning & structuring company intelligence...")
                 asyncio.run(clean_all_unstructured_reports_async(
                     unstructured_dir="Unstructured_data",
                     structured_dir="structured_data"
                 ))
-
-                progress_bar.progress(80)
-
-                update_structured_json_with_scores(company_df)
-
+ 
+                progress_bar.progress(60)
+ 
+                # Update JSONs with Streamlit scores
+                update_structured_json_with_scores(company_df, job_q, loc_q)
+ 
                 # -------------------------------
-                # STEP 3: Upload to Sheets
+                # STEP 3: Upload to Sheets & AI Summary
                 # -------------------------------
                 progress_text.text("📤 Uploading structured data to Google Sheets...")
-                #------------------------------------
+               
                 struct_p = Path("structured_data")
                 all_struct_files = list(struct_p.glob("*_Structured.json"))
-                
+               
                 if all_struct_files:
                     upload_batch_data(all_struct_files)
                 else:
-                    st.error("❌ No files found in structured_data folder.")
-
+                    st.error("⚠️ No files found in structured_data folder.")
+ 
+                # Run AI Strategic Layer
                 progress_bar.progress(70)
-                progress_text.text("🧠 Generating AI Strategic Summaries...")
+                progress_text.text("🤖 Generating AI Strategic Summaries...")
                 run_ai_strategic_layer()
-
+ 
+                # ---------------------------------------------------------
+                # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+                # ---------------------------------------------------------
+               
+                progress_bar.progress(85)
+                progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
+               
+                # Run the enrichment script to create the CSV for verification
+                csv_path = asyncio.run(run_data_enrichment())
+               
                 progress_bar.progress(100)
-                progress_text.text("✅ Pipeline completed successfully!")
+ 
+                if csv_path and "Failed" not in csv_path:
+                    st.success("✅ Phase 1 Complete! Data available for verification below.")
+                    # st.balloons()
+                   
+                    # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
+                    st.session_state.enrichment_ready = True
+                    st.session_state.enrichment_csv = csv_path
+                else:
+                    st.error("❌ Data Enrichment Failed. Check logs.")
+ 
+                # ---------------------------------------------------------
+                # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+                # ---------------------------------------------------------
+ 
+ 
+            # ---------------------------------------------------------
+            # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+            # ---------------------------------------------------------
+            st.divider()
+            st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+ 
+            # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+            if st.session_state.get("enrichment_ready"):
+                st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+               
+                # Load CSV to show preview
+                try:
+                    if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+                        enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+                        st.dataframe(enrich_df.head(), use_container_width=True)
+                       
+                        with open(st.session_state.enrichment_csv, "rb") as f:
+                            st.download_button(
+                                label="📥 Download Enriched Data (CSV)",
+                                data=f,
+                                file_name="Enriched_Leads_For_Verification.csv",
+                                mime="text/csv"
+                            )
+                    else:
+                        st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+                except Exception as e:
+                    st.warning(f"Could not read generated CSV: {e}")
+ 
+            # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+            st.markdown("### 📤 Upload Verified Data to Start Emailing")
+            verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+ 
+            if verified_file:
+                if st.button("🚀 Sync Data & Generate Emails"):
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                   
+                    try:
+                        # 1. Read File
+                        verified_df = pd.read_csv(verified_file)
+                       
+                        # 2. Check columns
+                        cols = [c.strip() for c in verified_df.columns]
+                        if "Email_ID" not in cols:
+                            st.error("❌ File must have an 'Email_ID' column.")
+                            st.stop()
+                       
+                        # 3. Update Google Sheet
+                        progress_text.text("🔄 Syncing verified data to Google Sheets...")
+                        progress_bar.progress(30)
+                       
+                        updated_count = update_sheet_with_enriched_data(verified_df)
+                       
+                        if updated_count > 0:
+                            st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+                        else:
+                            st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                       
+                        # 4. Generate Emails
+                        progress_text.text("✍️ AI is writing personalized emails...")
+                        progress_bar.progress(60)
+                       
+                        run_email_generation_layer()
+                       
+                        progress_bar.progress(80)
+                        st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+                        # st.balloons()
+                        leads = read_leads_from_sheet(GOOGLE_SHEET_NAME)
+                        result = send_to_instantly(leads)
+                        progress_bar.progress(100)
+                        st.session_state.instantly_ready = True
+                        st.session_state.instantly_result = result
+                        st.success("🚀 Leads sent to Instantly for outreach!")
+ 
+                        st.success(
+                            f"🎉 Instantly Campaign Updated!\n\n"
+                            f"• Total sent: {result['total_sent']}\n"
+                            f"• Uploaded: {result['leads_uploaded']}\n"
+                            f"• Skipped: {result['skipped_count']}"
+                        )
+                        
+                        st.divider()
+                       
+                        st.info(" Note: Make sure your email has access to this sheet.")
 
-                st.success("🎉 Deep research → structured data → Google Sheets upload completed!")
-
-                with st.spinner("🧠 Generating AI Strategic Summaries..."):
-                    run_ai_strategic_layer()
-
-                st.success("🎯 AI Strategic summaries added to Google Sheets")
-
-
-
-
-
-    # --- DOWNLOAD ---
+                        # 3. Final Button
+                        st.link_button(
+                            label="📊 Open Google Sheet", 
+                            url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+                            type="primary"
+                        )
+                       
+                    except Exception as e:
+                        st.error(f"❌ An error occurred: {e}")
+            # ================= INSTANTLY CAMPAIGN CONTROL =================
+ 
+            if st.session_state.get("instantly_ready"):
+ 
+                st.divider()
+                st.markdown("## 🚀 Instantly Campaign Control")
+ 
+                if st.session_state.get("instantly_activated"):
+                    st.success("🟢 Campaign is already active")
+                else:
+                    if st.button("▶️ Activate Instantly Campaign"):
+                        with st.spinner("Activating campaign..."):
+                            try:
+                                campaign = activate_campaign(INSTANTLY_CAMPAIGN_ID)
+ 
+                                if campaign.get("status") == 1:
+                                    st.session_state.instantly_activated = True
+                                    st.success("✅ Campaign activated successfully!")
+                                else:
+                                    st.warning(
+                                        f"⚠️ Campaign responded but status = {campaign.get('status')}"
+                                    )
+ 
+                            except Exception as e:
+                                st.error(f"❌ Failed to activate campaign: {e}")
+ 
+ 
+ 
+   
+    # --- ORIGINAL DOWNLOAD BUTTON ---
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(label="📥 Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
-
-
-
-
-
-
+    st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
