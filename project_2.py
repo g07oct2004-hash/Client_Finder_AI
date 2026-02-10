@@ -55,7 +55,7 @@ def get_logger():
         return logger
     logger.setLevel(logging.INFO)
     try:
-        handler = logging.FileHandler("app.log", encoding="utf-8")
+        handler = logging.FileHandler("app.log", mode='w', encoding="utf-8")
     except:
         handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
@@ -671,38 +671,87 @@ def normalize_employee_count(val):
 
 
 
-def parse_posted_to_days(posted_str):
+# def parse_posted_to_days(posted_str):
+#     """
+#     Converts 'Recent', '19 hours ago', '4 days ago', etc. → number of days ago
+#     Uses UTC time (safe for Render / cloud deployments)
+#     """
+#     if not posted_str or not isinstance(posted_str, str):
+#         return None
+
+#     s = posted_str.lower().strip()
+
+#     # Treat "recent" as today
+#     if "recent" in s:
+#         return 0
+
+#     # Match "X hours ago"
+#     hours_match = re.search(r"(\d+)\s*hour", s)
+#     if hours_match:
+#         hours = int(hours_match.group(1))
+#         return max(hours / 24, 0)
+
+#     # Match "X days ago"
+#     days_match = re.search(r"(\d+)\s*day", s)
+#     if days_match:
+#         return int(days_match.group(1))
+
+#     # Match "X weeks ago" (just in case)
+#     weeks_match = re.search(r"(\d+)\s*week", s)
+#     if weeks_match:
+#         return int(weeks_match.group(1)) * 7
+
+#     return None
+
+def parse_posted_to_days(posted):
     """
-    Converts 'Recent', '19 hours ago', '4 days ago', etc. → number of days ago
-    Uses UTC time (safe for Render / cloud deployments)
+    Handles:
+    - '2 days ago', '19 hours ago', 'Recent'
+    - 'YYYY-MM-DD' (Adzuna Fix)
+    - pandas.Timestamp / datetime
     """
-    if not posted_str or not isinstance(posted_str, str):
+    if posted is None:
         return None
 
-    s = posted_str.lower().strip()
+    # ---- Datetime / Timestamp (Adzuna via Pandas) ----
+    if isinstance(posted, (datetime, pd.Timestamp)):
+        days_ago = (datetime.utcnow() - posted.to_pydatetime()).days
+        return max(days_ago, 0)
 
-    # Treat "recent" as today
+    # ---- String formats ----
+    if not isinstance(posted, str):
+        return None
+
+    s = posted.lower().strip()
+
+    # 1. Old Logic: Recent
     if "recent" in s:
         return 0
 
-    # Match "X hours ago"
+    # 2. Old Logic: Hours
     hours_match = re.search(r"(\d+)\s*hour", s)
     if hours_match:
-        hours = int(hours_match.group(1))
-        return max(hours / 24, 0)
+        return int(hours_match.group(1)) / 24
 
-    # Match "X days ago"
+    # 3. Old Logic: Days
     days_match = re.search(r"(\d+)\s*day", s)
     if days_match:
         return int(days_match.group(1))
 
-    # Match "X weeks ago" (just in case)
+    # 4. Old Logic: Weeks
     weeks_match = re.search(r"(\d+)\s*week", s)
     if weeks_match:
         return int(weeks_match.group(1)) * 7
 
-    return None
-
+    # ---- NEW LOGIC: ISO date string (For Adzuna) ----
+    # This runs only if the regex matches above failed.
+    # It attempts to parse 'YYYY-MM-DD' format.
+    try:
+        posted_date = datetime.strptime(s[:10], "%Y-%m-%d")
+        days_ago = (datetime.utcnow() - posted_date).days
+        return max(days_ago, 0)
+    except:
+        return None
 
 
 def job_freshness_score(posted_str):
@@ -1810,28 +1859,870 @@ if st.session_state.df is not None:
     # st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
          
 
-        if st.session_state.show_leads:
-        # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
-            qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+        # if st.session_state.show_leads:
+    #     # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+    #         qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
  
+    #         st.markdown("### 🧠 Deep Company Intelligence")
+    #         st.write(f"Qualified Companies: {len(qualified_companies)}")
+ 
+    #         # --- MAIN PROCESS BUTTON ---
+    #         if st.button("🚀 Generate Deep Company Reports"):
+    #             progress_text = st.empty()
+    #             progress_bar = st.progress(0)
+ 
+    #             # -------------------------------
+    #             # STEP 1: Deep Research
+    #             # -------------------------------
+    #             progress_text.text("🔍 Running deep company research...")
+    #             progress_bar.progress(10)
+ 
+    #             asyncio.run(run_deep_research_for_companies(qualified_companies))
+ 
+    #             progress_bar.progress(40)
+ 
+    #             # -------------------------------
+    #             # STEP 2: Cleaning & Structuring
+    #             # -------------------------------
+    #             progress_text.text("🧹 Cleaning & structuring company intelligence...")
+    #             asyncio.run(clean_all_unstructured_reports_async(
+    #                 unstructured_dir="Unstructured_data",
+    #                 structured_dir="structured_data"
+    #             ))
+ 
+    #             progress_bar.progress(60)
+ 
+    #             # Update JSONs with Streamlit scores
+    #             update_structured_json_with_scores(company_df, job_q, loc_q)
+ 
+    #             # -------------------------------
+    #             # STEP 3: Upload to Sheets & AI Summary
+    #             # -------------------------------
+    #             progress_text.text("📤 Uploading structured data to Google Sheets...")
+               
+    #             struct_p = Path("structured_data")
+    #             all_struct_files = list(struct_p.glob("*_Structured.json"))
+               
+    #             if all_struct_files:
+    #                 upload_batch_data(all_struct_files)
+    #             else:
+    #                 st.error("⚠️ No files found in structured_data folder.")
+ 
+    #             # Run AI Strategic Layer
+    #             progress_bar.progress(70)
+    #             progress_text.text("🤖 Generating AI Strategic Summaries...")
+    #             run_ai_strategic_layer()
+ 
+    #             # ---------------------------------------------------------
+    #             # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+    #             # ---------------------------------------------------------
+               
+    #             progress_bar.progress(85)
+    #             progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
+               
+    #             # Run the enrichment script to create the CSV for verification
+    #             csv_path = asyncio.run(run_data_enrichment())
+               
+    #             progress_bar.progress(100)
+ 
+    #             if csv_path and "Failed" not in csv_path:
+    #                 st.success("✅ Phase 1 Complete! Data available for verification below.")
+    #                 # st.balloons()
+                   
+    #                 # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
+    #                 st.session_state.enrichment_ready = True
+    #                 st.session_state.enrichment_csv = csv_path
+    #             else:
+    #                 st.error("❌ Data Enrichment Failed. Check logs.")
+ 
+    #             # ---------------------------------------------------------
+    #             # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+    #             # ---------------------------------------------------------
+ 
+ 
+    #         # ---------------------------------------------------------
+    #         # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+    #         # ---------------------------------------------------------
+    #         st.divider()
+    #         st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+ 
+    #         # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+    #         if st.session_state.get("enrichment_ready"):
+    #             st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+               
+    #             # Load CSV to show preview
+    #             try:
+    #                 if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+    #                     enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+    #                     st.dataframe(enrich_df.head(), use_container_width=True)
+                       
+    #                     with open(st.session_state.enrichment_csv, "rb") as f:
+    #                         st.download_button(
+    #                             label="📥 Download Enriched Data (CSV)",
+    #                             data=f,
+    #                             file_name="Enriched_Leads_For_Verification.csv",
+    #                             mime="text/csv"
+    #                         )
+    #                 else:
+    #                     st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+    #             except Exception as e:
+    #                 st.warning(f"Could not read generated CSV: {e}")
+ 
+    #         # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+    #         st.markdown("### 📤 Upload Verified Data to Start Emailing")
+    #         verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+ 
+    #         if verified_file:
+    #             if st.button("🚀 Sync Data & Generate Emails"):
+    #                 progress_text = st.empty()
+    #                 progress_bar = st.progress(0)
+                   
+    #                 try:
+    #                     # 1. Read File
+    #                     verified_df = pd.read_csv(verified_file)
+                       
+    #                     # 2. Check columns
+    #                     cols = [c.strip() for c in verified_df.columns]
+    #                     if "Email_ID" not in cols:
+    #                         st.error("❌ File must have an 'Email_ID' column.")
+    #                         st.stop()
+                       
+    #                     # 3. Update Google Sheet
+    #                     progress_text.text("🔄 Syncing verified data to Google Sheets...")
+    #                     progress_bar.progress(30)
+                       
+    #                     updated_count = update_sheet_with_enriched_data(verified_df)
+                       
+    #                     if updated_count > 0:
+    #                         st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+    #                     else:
+    #                         st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                       
+    #                     # 4. Generate Emails
+    #                     progress_text.text("✍️ AI is writing personalized emails...")
+    #                     progress_bar.progress(60)
+                       
+    #                     run_email_generation_layer()
+                       
+    #                     progress_bar.progress(80)
+    #                     st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+    #                     # st.balloons()
+    #                     leads = read_leads_from_sheet(GOOGLE_SHEET_NAME)
+    #                     result = send_to_instantly(leads)
+    #                     progress_bar.progress(100)
+    #                     st.session_state.instantly_ready = True
+    #                     st.session_state.instantly_result = result
+    #                     st.success("🚀 Leads sent to Instantly for outreach!")
+ 
+    #                     st.success(
+    #                         f"🎉 Instantly Campaign Updated!\n\n"
+    #                         f"• Total sent: {result['total_sent']}\n"
+    #                         f"• Uploaded: {result['leads_uploaded']}\n"
+    #                         f"• Skipped: {result['skipped_count']}"
+    #                     )
+                        
+    #                     st.divider()
+                       
+    #                     st.info(" Note: Make sure your email has access to this sheet.")
+
+    #                     # 3. Final Button
+    #                     st.link_button(
+    #                         label="📊 Open Google Sheet", 
+    #                         url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+    #                         type="primary"
+    #                     )
+                       
+    #                 except Exception as e:
+    #                     st.error(f"❌ An error occurred: {e}")
+    #         # ================= INSTANTLY CAMPAIGN CONTROL =================
+ 
+    #         if st.session_state.get("instantly_ready"):
+ 
+    #             st.divider()
+    #             st.markdown("## 🚀 Instantly Campaign Control")
+ 
+    #             if st.session_state.get("instantly_activated"):
+    #                 st.success("🟢 Campaign is already active")
+    #             else:
+    #                 if st.button("▶️ Activate Instantly Campaign"):
+    #                     with st.spinner("Activating campaign..."):
+    #                         try:
+    #                             campaign = activate_campaign(INSTANTLY_CAMPAIGN_ID)
+ 
+    #                             if campaign.get("status") == 1:
+    #                                 st.session_state.instantly_activated = True
+    #                                 st.success("✅ Campaign activated successfully!")
+    #                             else:
+    #                                 st.warning(
+    #                                     f"⚠️ Campaign responded but status = {campaign.get('status')}"
+    #                                 )
+ 
+    #                         except Exception as e:
+    #                             st.error(f"❌ Failed to activate campaign: {e}")
+ 
+ 
+ 
+   
+    # # --- ORIGINAL DOWNLOAD BUTTON ---
+    # csv = df.to_csv(index=False).encode("utf-8")
+    # st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
+
+    #     if st.session_state.show_leads:
+    #         # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+    #         qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+ 
+    #         st.markdown("### 🧠 Deep Company Intelligence")
+    #         st.write(f"Qualified Companies: {len(qualified_companies)}")
+ 
+    #         # --- MAIN PROCESS BUTTON ---
+    #         if st.button("🚀 Generate Deep Company Reports"):
+    #             progress_text = st.empty()
+    #             progress_bar = st.progress(0)
+ 
+    #             # -------------------------------
+    #             # STEP 1: Deep Research
+    #             # -------------------------------
+    #             progress_text.text("🔍 Running deep company research...")
+    #             progress_bar.progress(10)
+ 
+    #             asyncio.run(run_deep_research_for_companies(qualified_companies))
+ 
+    #             progress_bar.progress(40)
+ 
+    #             # -------------------------------
+    #             # STEP 2: Cleaning & Structuring
+    #             # -------------------------------
+    #             progress_text.text("🧹 Cleaning & structuring company intelligence...")
+    #             asyncio.run(clean_all_unstructured_reports_async(
+    #                 unstructured_dir="Unstructured_data",
+    #                 structured_dir="structured_data"
+    #             ))
+ 
+    #             progress_bar.progress(60)
+ 
+    #             # Update JSONs with Streamlit scores
+    #             update_structured_json_with_scores(company_df, job_q, loc_q)
+ 
+    #             # -------------------------------
+    #             # STEP 3: Upload to Sheets & AI Summary
+    #             # -------------------------------
+    #             progress_text.text("📤 Uploading structured data to Google Sheets...")
+               
+    #             struct_p = Path("structured_data")
+    #             all_struct_files = list(struct_p.glob("*_Structured.json"))
+               
+    #             if all_struct_files:
+    #                 upload_batch_data(all_struct_files)
+    #             else:
+    #                 st.error("⚠️ No files found in structured_data folder.")
+ 
+    #             # Run AI Strategic Layer
+    #             progress_bar.progress(70)
+    #             progress_text.text("🤖 Generating AI Strategic Summaries...")
+    #             run_ai_strategic_layer()
+ 
+    #             # ---------------------------------------------------------
+    #             # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+    #             # ---------------------------------------------------------
+               
+    #             progress_bar.progress(85)
+    #             progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
+               
+    #             # Run the enrichment script to create the CSV for verification
+    #             csv_path = asyncio.run(run_data_enrichment())
+               
+    #             progress_bar.progress(100)
+ 
+    #             if csv_path and "Failed" not in csv_path:
+    #                 st.success("✅ Phase 1 Complete! Data available for verification below.")
+    #                 # st.balloons()
+                   
+    #                 # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
+    #                 st.session_state.enrichment_ready = True
+    #                 st.session_state.enrichment_csv = csv_path
+    #             else:
+    #                 st.error("❌ Data Enrichment Failed. Check logs.")
+ 
+    #             # ---------------------------------------------------------
+    #             # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+    #             # ---------------------------------------------------------
+ 
+ 
+    #         # ---------------------------------------------------------
+    #         # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+    #         # ---------------------------------------------------------
+    #         st.divider()
+    #         st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+ 
+    #         # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+    #         if st.session_state.get("enrichment_ready"):
+    #             st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+               
+    #             # Load CSV to show preview
+    #             try:
+    #                 if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+    #                     enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+    #                     st.dataframe(enrich_df.head(), use_container_width=True)
+                       
+    #                     with open(st.session_state.enrichment_csv, "rb") as f:
+    #                         st.download_button(
+    #                             label="📥 Download Enriched Data (CSV)",
+    #                             data=f,
+    #                             file_name="Enriched_Leads_For_Verification.csv",
+    #                             mime="text/csv"
+    #                         )
+    #                 else:
+    #                     st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+    #             except Exception as e:
+    #                 st.warning(f"Could not read generated CSV: {e}")
+ 
+    #         # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+    #         st.markdown("### 📤 Upload Verified Data to Start Emailing")
+    #         verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+ 
+    #         if verified_file:
+    #             if st.button("🚀 Sync Data & Generate Emails"):
+    #                 progress_text = st.empty()
+    #                 progress_bar = st.progress(0)
+                   
+    #                 try:
+    #                     # 1. Read File
+    #                     verified_df = pd.read_csv(verified_file)
+                       
+    #                     # 2. Check columns
+    #                     cols = [c.strip() for c in verified_df.columns]
+    #                     if "Email_ID" not in cols:
+    #                         st.error("❌ File must have an 'Email_ID' column.")
+    #                         st.stop()
+                       
+    #                     # 3. Update Google Sheet
+    #                     progress_text.text("🔄 Syncing verified data to Google Sheets...")
+    #                     progress_bar.progress(30)
+                       
+    #                     updated_count = update_sheet_with_enriched_data(verified_df)
+                       
+    #                     if updated_count > 0:
+    #                         st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+    #                     else:
+    #                         st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                       
+    #                     # 4. Generate Emails
+    #                     progress_text.text("✍️ AI is writing personalized emails...")
+    #                     progress_bar.progress(60)
+                       
+    #                     run_email_generation_layer()
+                       
+    #                     progress_bar.progress(90)
+    #                     st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+                        
+    #                     # --- REMOVED INSTANTLY AUTOMATION ---
+    #                     # Instead, fetching data for manual download
+                        
+    #                     progress_text.text("📥 Fetching final data for download...")
+                        
+    #                     # Fetch data back from Google Sheet to ensure we have the generated emails
+    #                     gc_final = connect_to_sheet()
+    #                     sh_final = gc_final.open(GOOGLE_SHEET_NAME)
+    #                     ws_final = sh_final.sheet1
+    #                     all_data = ws_final.get_all_records()
+                        
+    #                     final_df = pd.DataFrame(all_data)
+
+    #                     # Define required columns for Instantly
+    #                     # Using 'Company' as fallback for 'meta_company_name' if needed
+    #                     if "meta_company_name" not in final_df.columns and "Company" in final_df.columns:
+    #                         final_df.rename(columns={"Company": "meta_company_name"}, inplace=True)
+                            
+    #                     target_cols = ["meta_company_name", "Email Subject", "Email Body", "CEO Name", "Email ID"]
+                        
+    #                     # Filter to keep only available target columns
+    #                     available_cols = [c for c in target_cols if c in final_df.columns]
+    #                     final_output = final_df[available_cols]
+
+    #                     progress_bar.progress(100)
+                        
+    #                     # Show Success and Download Button
+    #                     st.success("🚀 Ready for Instantly! Download the file below.")
+                        
+    #                     st.divider()
+                        
+    #                     csv_final = final_output.to_csv(index=False).encode("utf-8")
+    #                     st.download_button(
+    #                         label="📥 Download Final Leads (For Instantly)", 
+    #                         data=csv_final, 
+    #                         file_name="Final_Instantly_Leads.csv", 
+    #                         mime="text/csv"
+    #                     )
+
+    #                     st.info(" Note: Make sure your email has access to this sheet.")
+
+    #                     # 3. Final Button
+    #                     st.link_button(
+    #                         label="📊 Open Google Sheet", 
+    #                         url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+    #                         type="primary"
+    #                     )
+                       
+    #                 except Exception as e:
+    #                     st.error(f"❌ An error occurred: {e}")
+
+    # # --- ORIGINAL DOWNLOAD BUTTON ---
+    # if st.session_state.df is not None:
+    #     csv = st.session_state.df.to_csv(index=False).encode("utf-8")
+    #     st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
+        # ---------------------------------------------------------
+            # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+            # ---------------------------------------------------------
+        # st.divider()
+        # st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+
+#         # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+#         if st.session_state.get("enrichment_ready"):
+#             st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+            
+#             # Load CSV to show preview
+#             try:
+#                 if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+#                     enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+#                     st.dataframe(enrich_df.head(), use_container_width=True)
+                    
+#                     with open(st.session_state.enrichment_csv, "rb") as f:
+#                         st.download_button(
+#                             label="📥 Download Enriched Data (CSV)",
+#                             data=f,
+#                             file_name="Enriched_Leads_For_Verification.csv",
+#                             mime="text/csv"
+#                         )
+#                 else:
+#                     st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+#             except Exception as e:
+#                 st.warning(f"Could not read generated CSV: {e}")
+
+#         # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+#         st.markdown("### 📤 Upload Verified Data to Start Emailing")
+#         verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+
+#         if verified_file:
+#             # Trigger processing on button click
+#             if st.button("🚀 Sync Data & Generate Emails"):
+#                 st.session_state.processing_emails = True
+            
+#             # Main Logic inside Session State check to prevent reset during interactions
+#             if st.session_state.get("processing_emails"):
+#                 progress_text = st.empty()
+#                 progress_bar = st.progress(0)
+                
+#                 try:
+#                     # 1. Read File
+#                     # Reset file pointer to the beginning to avoid read errors
+#                     verified_file.seek(0)
+#                     verified_df = pd.read_csv(verified_file)
+                    
+#                     # 2. Check columns
+#                     cols = [c.strip() for c in verified_df.columns]
+#                     if "Email_ID" not in cols:
+#                         st.error("❌ File must have an 'Email_ID' column.")
+#                         st.stop()
+
+#                     # -----------------------------------------------------
+#                     # SAVE CURRENT COMPANY NAMES TO FILTER LATER
+#                     # -----------------------------------------------------
+#                     # We capture the list of companies in this specific batch.
+#                     # This allows us to filter the Google Sheet data later so we don't get old leads.
+#                     current_batch_companies = []
+#                     if "meta_company_name" in verified_df.columns:
+#                         current_batch_companies = verified_df["meta_company_name"].astype(str).tolist()
+#                     elif "Company" in verified_df.columns:
+#                         current_batch_companies = verified_df["Company"].astype(str).tolist()
+                    
+#                     # 3. Update Google Sheet
+#                     progress_text.text("🔄 Syncing verified data to Google Sheets...")
+#                     progress_bar.progress(30)
+                    
+#                     updated_count = update_sheet_with_enriched_data(verified_df)
+                    
+#                     if updated_count > 0:
+#                         st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+#                     else:
+#                         st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                    
+#                     # 4. Generate Emails
+#                     progress_text.text("✍️ AI is writing personalized emails...")
+#                     progress_bar.progress(60)
+                    
+#                     run_email_generation_layer()
+                    
+#                     progress_bar.progress(90)
+#                     st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+                    
+#                     # ---------------------------------------------------------
+#                     # 👇 NEW LOGIC: FETCH ONLY CURRENT BATCH DATA 👇
+#                     # ---------------------------------------------------------
+#                     progress_text.text("📥 Fetching final data for download...")
+                    
+#                     # Fetch ALL data from Sheet (this includes old and new data)
+#                     gc_final = connect_to_sheet()
+#                     sh_final = gc_final.open(GOOGLE_SHEET_NAME)
+#                     ws_final = sh_final.sheet1
+#                     all_data = ws_final.get_all_records()
+                    
+#                     full_df = pd.DataFrame(all_data)
+
+#                     # Handle Column Name Variations (Normalize 'Company' to 'meta_company_name')
+#                     if "meta_company_name" not in full_df.columns and "Company" in full_df.columns:
+#                         full_df.rename(columns={"Company": "meta_company_name"}, inplace=True)
+
+#                     # --- CRITICAL FILTERING STEP ---
+#                     # Filter to keep ONLY rows that match the companies in our uploaded file
+#                     if current_batch_companies:
+#                         # Normalize names for better matching (strip spaces, lowercase)
+#                         batch_set = set(str(x).strip().lower() for x in current_batch_companies)
+                        
+#                         # Apply the filter
+#                         final_df = full_df[full_df["meta_company_name"].astype(str).apply(lambda x: x.strip().lower()).isin(batch_set)]
+#                     else:
+#                         # Fallback: If no company names were found (rare), keep full data
+#                         final_df = full_df
+
+#                     # Keep only required columns for Instantly
+#                     target_cols = ["meta_company_name", "Email Subject", "Email Body", "CEO Name", "Email ID"]
+#                     available_cols = [c for c in target_cols if c in final_df.columns]
+#                     final_output = final_df[available_cols]
+
+#                     progress_bar.progress(100)
+                    
+#                     # --- SAVE TO SESSION STATE TO PERSIST AFTER DOWNLOAD CLICK ---
+#                     # This ensures the download button remains visible even if the app reruns
+#                     st.session_state.final_csv_ready = final_output.to_csv(index=False).encode("utf-8")
+                    
+#                     # Turn off the processing flag so we don't re-run logic unnecessarily
+#                     st.session_state.processing_emails = False 
+                    
+#                 except Exception as e:
+#                     st.error(f"❌ An error occurred: {e}")
+#                     st.session_state.processing_emails = False
+
+#         # ---------------------------------------------------------
+#         # SHOW DOWNLOAD BUTTON (Persistent)
+#         # ---------------------------------------------------------
+#         # This block is outside the button logic, so it stays visible
+#         if st.session_state.get("final_csv_ready"):
+#             st.divider()
+#             st.success("🚀 Ready for Instantly! Download only the NEW leads below.")
+            
+#             st.download_button(
+#                 label="📥 Download Final Leads (Only Current Batch)", 
+#                 data=st.session_state.final_csv_ready, 
+#                 file_name="Final_Instantly_Leads.csv", 
+#                 mime="text/csv",
+#                 key="final_download_btn_persistent"
+#             )
+
+#             st.info(" Note: Make sure your email has access to this sheet.")
+
+#             # Final Link Button
+#             st.link_button(
+#                 label="📊 Open Google Sheet", 
+#                 url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+#                 type="primary"
+#             )
+
+# # --- ORIGINAL REPORT DOWNLOAD BUTTON (Outside the loop) ---
+# if st.session_state.df is not None:
+#     csv = st.session_state.df.to_csv(index=False).encode("utf-8")
+#     st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
+        # if st.session_state.show_leads:
+        #     # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+        #     qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+
+        #     st.markdown("### 🧠 Deep Company Intelligence")
+        #     st.write(f"Qualified Companies: {len(qualified_companies)}")
+
+        #     # --- MAIN PROCESS BUTTON ---
+        #     if st.button("🚀 Generate Deep Company Reports"):
+        #         progress_text = st.empty()
+        #         progress_bar = st.progress(0)
+
+        #         # -------------------------------
+        #         # STEP 1: Deep Research
+        #         # -------------------------------
+        #         progress_text.text("🔍 Running deep company research...")
+        #         progress_bar.progress(10)
+
+        #         asyncio.run(run_deep_research_for_companies(qualified_companies))
+
+        #         progress_bar.progress(40)
+
+        #         # -------------------------------
+        #         # STEP 2: Cleaning & Structuring
+        #         # -------------------------------
+        #         progress_text.text("🧹 Cleaning & structuring company intelligence...")
+        #         asyncio.run(clean_all_unstructured_reports_async(
+        #             unstructured_dir="Unstructured_data",
+        #             structured_dir="structured_data"
+        #         ))
+
+        #         progress_bar.progress(60)
+
+        #         # Update JSONs with Streamlit scores
+        #         update_structured_json_with_scores(company_df, job_q, loc_q)
+
+        #         # -------------------------------
+        #         # STEP 3: Upload to Sheets & AI Summary
+        #         # -------------------------------
+        #         progress_text.text("📤 Uploading structured data to Google Sheets...")
+                
+        #         struct_p = Path("structured_data")
+        #         all_struct_files = list(struct_p.glob("*_Structured.json"))
+                
+        #         if all_struct_files:
+        #             upload_batch_data(all_struct_files)
+        #         else:
+        #             st.error("⚠️ No files found in structured_data folder.")
+
+        #         # Run AI Strategic Layer
+        #         progress_bar.progress(70)
+        #         progress_text.text("🤖 Generating AI Strategic Summaries...")
+        #         run_ai_strategic_layer()
+
+        #         # ---------------------------------------------------------
+        #         # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
+        #         # ---------------------------------------------------------
+                
+        #         progress_bar.progress(85)
+        #         progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
+                
+        #         # Run the enrichment script to create the CSV for verification
+        #         csv_path = asyncio.run(run_data_enrichment())
+                
+        #         progress_bar.progress(100)
+
+        #         if csv_path and "Failed" not in csv_path:
+        #             st.success("✅ Phase 1 Complete! Data available for verification below.")
+        #             # st.balloons()
+                    
+        #             # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
+        #             st.session_state.enrichment_ready = True
+        #             st.session_state.enrichment_csv = csv_path
+        #         else:
+        #             st.error("❌ Data Enrichment Failed. Check logs.")
+
+        #         # ---------------------------------------------------------
+        #         # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
+        #         # ---------------------------------------------------------
+
+
+        #     # ---------------------------------------------------------
+        #     # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
+        #     # ---------------------------------------------------------
+        #     st.divider()
+        #     st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
+
+        #     # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
+        #     if st.session_state.get("enrichment_ready"):
+        #         st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
+                
+        #         # Load CSV to show preview
+        #         try:
+        #             if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
+        #                 enrich_df = pd.read_csv(st.session_state.enrichment_csv)
+        #                 st.dataframe(enrich_df.head(), use_container_width=True)
+                        
+        #                 with open(st.session_state.enrichment_csv, "rb") as f:
+        #                     st.download_button(
+        #                         label="📥 Download Enriched Data (CSV)",
+        #                         data=f,
+        #                         file_name="Enriched_Leads_For_Verification.csv",
+        #                         mime="text/csv"
+        #                     )
+        #             else:
+        #                 st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
+        #         except Exception as e:
+        #             st.warning(f"Could not read generated CSV: {e}")
+
+        #     # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
+        #     st.markdown("### 📤 Upload Verified Data to Start Emailing")
+        #     verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
+
+        #     if verified_file:
+        #         # Trigger processing on button click
+        #         if st.button("🚀 Sync Data & Generate Emails"):
+        #             st.session_state.processing_emails = True
+                
+        #         # Main Logic inside Session State check to prevent reset during interactions
+        #         if st.session_state.get("processing_emails"):
+        #             progress_text = st.empty()
+        #             progress_bar = st.progress(0)
+                    
+        #             try:
+        #                 # 1. Read File
+        #                 # Reset file pointer to the beginning to avoid read errors
+        #                 verified_file.seek(0)
+        #                 verified_df = pd.read_csv(verified_file)
+                        
+        #                 # 2. Check columns
+        #                 cols = [c.strip() for c in verified_df.columns]
+        #                 if "Email_ID" not in cols:
+        #                     st.error("❌ File must have an 'Email_ID' column.")
+        #                     st.stop()
+
+        #                 # -----------------------------------------------------
+        #                 # SAVE CURRENT COMPANY NAMES TO FILTER LATER
+        #                 # -----------------------------------------------------
+        #                 # We capture the list of companies in this specific batch.
+        #                 # This allows us to filter the Google Sheet data later so we don't get old leads.
+        #                 current_batch_companies = []
+        #                 if "meta_company_name" in verified_df.columns:
+        #                     current_batch_companies = verified_df["meta_company_name"].astype(str).tolist()
+        #                 elif "Company" in verified_df.columns:
+        #                     current_batch_companies = verified_df["Company"].astype(str).tolist()
+                        
+        #                 # 3. Update Google Sheet
+        #                 progress_text.text("🔄 Syncing verified data to Google Sheets...")
+        #                 progress_bar.progress(30)
+                        
+        #                 updated_count = update_sheet_with_enriched_data(verified_df)
+                        
+        #                 if updated_count > 0:
+        #                     st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
+        #                 else:
+        #                     st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
+                        
+        #                 # 4. Generate Emails
+        #                 progress_text.text("✍️ AI is writing personalized emails...")
+        #                 progress_bar.progress(60)
+                        
+        #                 run_email_generation_layer()
+                        
+        #                 progress_bar.progress(90)
+        #                 st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
+                        
+        #                 # ---------------------------------------------------------
+        #                 # 👇 NEW LOGIC: FETCH ONLY CURRENT BATCH DATA 👇
+        #                 # ---------------------------------------------------------
+        #                 progress_text.text("📥 Fetching final data for download...")
+                        
+        #                 # Fetch ALL data from Sheet (this includes old and new data)
+        #                 gc_final = connect_to_sheet()
+        #                 sh_final = gc_final.open(GOOGLE_SHEET_NAME)
+        #                 ws_final = sh_final.sheet1
+        #                 all_data = ws_final.get_all_records()
+                        
+        #                 full_df = pd.DataFrame(all_data)
+
+        #                 # Handle Column Name Variations (Normalize 'Company' to 'meta_company_name')
+        #                 if "meta_company_name" not in full_df.columns and "Company" in full_df.columns:
+        #                     full_df.rename(columns={"Company": "meta_company_name"}, inplace=True)
+
+        #                 # --- CRITICAL FILTERING STEP ---
+        #                 # Filter to keep ONLY rows that match the companies in our uploaded file
+        #                 if current_batch_companies:
+        #                     # Normalize names for better matching (strip spaces, lowercase)
+        #                     batch_set = set(str(x).strip().lower() for x in current_batch_companies)
+                            
+        #                     # Apply the filter
+        #                     final_df = full_df[full_df["meta_company_name"].astype(str).apply(lambda x: x.strip().lower()).isin(batch_set)]
+        #                 else:
+        #                     # Fallback: If no company names were found (rare), keep full data
+        #                     final_df = full_df
+
+        #                 # Keep only required columns for Instantly
+        #                 target_cols = ["meta_company_name", "Email Subject", "Email Body", "CEO Name", "Email ID"]
+        #                 available_cols = [c for c in target_cols if c in final_df.columns]
+        #                 final_output = final_df[available_cols]
+
+        #                 progress_bar.progress(100)
+                        
+        #                 # --- SAVE TO SESSION STATE TO PERSIST AFTER DOWNLOAD CLICK ---
+        #                 # This ensures the download button remains visible even if the app reruns
+        #                 st.session_state.final_csv_ready = final_output.to_csv(index=False).encode("utf-8")
+                        
+        #                 # Turn off the processing flag so we don't re-run logic unnecessarily
+        #                 st.session_state.processing_emails = False 
+                        
+        #             except Exception as e:
+        #                 st.error(f"❌ An error occurred: {e}")
+        #                 st.session_state.processing_emails = False
+
+        #     # ---------------------------------------------------------
+        #     # SHOW DOWNLOAD BUTTON (Persistent)
+        #     # ---------------------------------------------------------
+        #     # This block is outside the button logic, so it stays visible
+        #     if st.session_state.get("final_csv_ready"):
+        #         st.divider()
+        #         st.success("🚀 Ready for Instantly! Download only the NEW leads below.")
+                
+        #         st.download_button(
+        #             label="📥 Download Final Leads (Only Current Batch)", 
+        #             data=st.session_state.final_csv_ready, 
+        #             file_name="Final_Instantly_Leads.csv", 
+        #             mime="text/csv",
+        #             key="final_download_btn_persistent"
+        #         )
+
+        #         st.info(" Note: Make sure your email has access to this sheet.")
+
+        #         # Final Link Button
+        #         st.link_button(
+        #             label="📊 Open Google Sheet", 
+        #             url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+        #             type="primary"
+        #         )
+
+        # # --- ORIGINAL REPORT DOWNLOAD BUTTON (Outside the loop) ---
+        # if st.session_state.df is not None:
+        #     csv = st.session_state.df.to_csv(index=False).encode("utf-8")
+        #     st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+
+
+        if st.session_state.show_leads:
+            # qualified_companies = get_high_score_companies(company_df, threshold=25)#15
+            qualified_companies = get_high_score_companies(company_df, threshold=qualification_threshold)
+
             st.markdown("### 🧠 Deep Company Intelligence")
             st.write(f"Qualified Companies: {len(qualified_companies)}")
- 
+
             # --- MAIN PROCESS BUTTON ---
             if st.button("🚀 Generate Deep Company Reports"):
+                # ---------------------------------------------------------
+                # 👇 ADD THIS CLEANING BLOCK 👇
+                # ---------------------------------------------------------
+                import shutil
+                
+                # Folders to clean
+                folders_to_clean = ["Unstructured_data", "structured_data"]
+                
+                for folder in folders_to_clean:
+                    if os.path.exists(folder):
+                        # Folder ke andar ki saari files delete karo
+                        for filename in os.listdir(folder):
+                            file_path = os.path.join(folder, filename)
+                            try:
+                                if os.path.isfile(file_path) or os.path.islink(file_path):
+                                    os.unlink(file_path)
+                                elif os.path.isdir(file_path):
+                                    shutil.rmtree(file_path)
+                            except Exception as e:
+                                print(f"Failed to delete {file_path}. Reason: {e}")
+                # ---------------------------------------------------------
+                # 👆 END OF CLEANING 👆
+                # ---------------------------------------------------------
                 progress_text = st.empty()
                 progress_bar = st.progress(0)
- 
+
                 # -------------------------------
                 # STEP 1: Deep Research
                 # -------------------------------
                 progress_text.text("🔍 Running deep company research...")
                 progress_bar.progress(10)
- 
+
                 asyncio.run(run_deep_research_for_companies(qualified_companies))
- 
+
                 progress_bar.progress(40)
- 
+
                 # -------------------------------
                 # STEP 2: Cleaning & Structuring
                 # -------------------------------
@@ -1840,73 +2731,68 @@ if st.session_state.df is not None:
                     unstructured_dir="Unstructured_data",
                     structured_dir="structured_data"
                 ))
- 
+
                 progress_bar.progress(60)
- 
+
                 # Update JSONs with Streamlit scores
                 update_structured_json_with_scores(company_df, job_q, loc_q)
- 
+
                 # -------------------------------
                 # STEP 3: Upload to Sheets & AI Summary
                 # -------------------------------
                 progress_text.text("📤 Uploading structured data to Google Sheets...")
-               
+                
                 struct_p = Path("structured_data")
                 all_struct_files = list(struct_p.glob("*_Structured.json"))
-               
+                
                 if all_struct_files:
                     upload_batch_data(all_struct_files)
                 else:
                     st.error("⚠️ No files found in structured_data folder.")
- 
+
                 # Run AI Strategic Layer
                 progress_bar.progress(70)
                 progress_text.text("🤖 Generating AI Strategic Summaries...")
                 run_ai_strategic_layer()
- 
+
                 # ---------------------------------------------------------
                 # 👇 NEW LOGIC: ENRICHMENT & STOP 👇
                 # ---------------------------------------------------------
-               
+                
                 progress_bar.progress(85)
                 progress_text.text("🧠 Extracting CEO & Contact Info via Groq...")
-               
+                
                 # Run the enrichment script to create the CSV for verification
                 csv_path = asyncio.run(run_data_enrichment())
-               
+                
                 progress_bar.progress(100)
- 
+
                 if csv_path and "Failed" not in csv_path:
                     st.success("✅ Phase 1 Complete! Data available for verification below.")
-                    # st.balloons()
-                   
+                    
                     # 🔒 LOCK THE STATE: This triggers the Download Button to appear below
                     st.session_state.enrichment_ready = True
                     st.session_state.enrichment_csv = csv_path
                 else:
                     st.error("❌ Data Enrichment Failed. Check logs.")
- 
-                # ---------------------------------------------------------
-                # 👆 PIPELINE STOPS HERE FOR USER INPUT 👆
-                # ---------------------------------------------------------
- 
- 
+
+
             # ---------------------------------------------------------
             # 👇 NEW SECTION: STEP 4 (Verify & Generate Emails) 👇
             # ---------------------------------------------------------
             st.divider()
             st.markdown("## 📧 Step 4: Verify & Generate Emails (Human-in-the-Loop)")
- 
+
             # A. SHOW DOWNLOAD BUTTON (If Phase 1 is done)
             if st.session_state.get("enrichment_ready"):
-                st.info("👇 **Action Required:** Download this file, add 'Email_ID', verify CEO names, and re-upload.")
-               
+                st.info("👇 **Action Required:** Download this file, add 'Email_ID' & 'CEO Name', then re-upload.")
+                
                 # Load CSV to show preview
                 try:
                     if st.session_state.enrichment_csv and os.path.exists(st.session_state.enrichment_csv):
                         enrich_df = pd.read_csv(st.session_state.enrichment_csv)
                         st.dataframe(enrich_df.head(), use_container_width=True)
-                       
+                        
                         with open(st.session_state.enrichment_csv, "rb") as f:
                             st.download_button(
                                 label="📥 Download Enriched Data (CSV)",
@@ -1918,102 +2804,171 @@ if st.session_state.df is not None:
                         st.warning("⚠️ CSV file not found. Please re-run Phase 1.")
                 except Exception as e:
                     st.warning(f"Could not read generated CSV: {e}")
- 
+
             # B. UPLOAD VERIFIED FILE & GENERATE EMAILS
             st.markdown("### 📤 Upload Verified Data to Start Emailing")
             verified_file = st.file_uploader("Upload the CSV with filled 'Email_ID' column", type=["csv"], key="email_uploader")
- 
+
             if verified_file:
+                # Trigger processing on button click
                 if st.button("🚀 Sync Data & Generate Emails"):
+                    st.session_state.processing_emails = True
+                
+                # Main Logic inside Session State check to prevent reset during interactions
+                if st.session_state.get("processing_emails"):
                     progress_text = st.empty()
                     progress_bar = st.progress(0)
-                   
+                    
                     try:
                         # 1. Read File
+                    #     verified_file.seek(0)
+                    #     verified_df = pd.read_csv(verified_file)
+                        
+                    #     rename_map = {
+                    #     "Company_Name": "meta_company_name", 
+                    #     "CEO_Full_Name": "CEO Name", 
+                    #     "Email_ID": "Email ID"
+                    # }
+                    #     verified_df.rename(columns=rename_map, inplace=True)
+
+                    # 1. Read File
+                        verified_file.seek(0)
                         verified_df = pd.read_csv(verified_file)
-                       
-                        # 2. Check columns
-                        cols = [c.strip() for c in verified_df.columns]
-                        if "Email_ID" not in cols:
-                            st.error("❌ File must have an 'Email_ID' column.")
-                            st.stop()
-                       
+                        
+                        # ---------------------------------------------------
+                        # 👇 DEMO SAVER FIX: CREATE BOTH COLUMN NAMES 👇
+                        # ---------------------------------------------------
+                        # Hum columns ko rename nahi karenge, duplicate banayenge.
+                        # Taaki function ko jo naam pasand ho, wo mil jaye.
+                        
+                        # Fix Spaces
+                        verified_df.columns = [c.strip() for c in verified_df.columns]
+
+                        # 1. Company Name (Sheet needs 'meta_company_name')
+                        if "Company_Name" in verified_df.columns:
+                            verified_df["meta_company_name"] = verified_df["Company_Name"]
+                            verified_df["Company"] = verified_df["Company_Name"]
+
+                        # 2. Email (Sheet needs 'Email ID' or 'Email_ID')
+                        if "Email_ID" in verified_df.columns:
+                            verified_df["Email ID"] = verified_df["Email_ID"]
+                            verified_df["Email"] = verified_df["Email_ID"]
+                        
+                        # 3. CEO (Sheet needs 'CEO Name')
+                        if "CEO_Full_Name" in verified_df.columns:
+                            verified_df["CEO Name"] = verified_df["CEO_Full_Name"]
+                            verified_df["CEO"] = verified_df["CEO_Full_Name"]
+                        # -----------------------------------------------------
+                        # 🔍 SIMPLE & DIRECT COLUMN CHECK
+                        # -----------------------------------------------------
+                        # Since we generated the file, we expect 'meta_company_name' to be there.
+                        # We will strictly use this list to filter the final sheet.
+                        
+                        target_company_col = "meta_company_name"
+                        
+                        # Clean columns (remove spaces just in case)
+                        verified_df.columns = [c.strip() for c in verified_df.columns]
+                        
+                        if target_company_col not in verified_df.columns:
+                            # Fallback: If user renamed it to "Company"
+                            if "Company_Name" in verified_df.columns:  
+                                verified_df.rename(columns={"Company_Name": target_company_col}, inplace=True)
+                            elif "Company" in verified_df.columns:
+                                verified_df.rename(columns={"Company": target_company_col}, inplace=True)
+                            else:
+                                st.error(f"❌ Error: The uploaded file is missing the '{target_company_col}' column.")
+                                st.session_state.processing_emails = False
+                                st.stop()
+                        
+                        # CAPTURE THE LIST OF COMPANIES YOU JUST UPLOADED
+                        # This is the "Key" to getting the right data back.
+                        current_batch_companies = verified_df[target_company_col].astype(str).str.strip().tolist()
+
                         # 3. Update Google Sheet
                         progress_text.text("🔄 Syncing verified data to Google Sheets...")
                         progress_bar.progress(30)
-                       
+                        
                         updated_count = update_sheet_with_enriched_data(verified_df)
-                       
+                        
                         if updated_count > 0:
                             st.success(f"✅ Updated {updated_count} rows in Google Sheets!")
                         else:
-                            st.warning("⚠️ No rows updated (Check if Company Names match Google Sheet). Proceeding...")
-                       
+                            st.warning("⚠️ No rows updated. Duplicate Data")
+                        
                         # 4. Generate Emails
                         progress_text.text("✍️ AI is writing personalized emails...")
                         progress_bar.progress(60)
-                       
-                        run_email_generation_layer()
-                       
-                        progress_bar.progress(80)
-                        st.success("🎉 Process Complete! Emails have been drafted in the Google Sheet.")
-                        # st.balloons()
-                        leads = read_leads_from_sheet(GOOGLE_SHEET_NAME)
-                        result = send_to_instantly(leads)
-                        progress_bar.progress(100)
-                        st.session_state.instantly_ready = True
-                        st.session_state.instantly_result = result
-                        st.success("🚀 Leads sent to Instantly for outreach!")
- 
-                        st.success(
-                            f"🎉 Instantly Campaign Updated!\n\n"
-                            f"• Total sent: {result['total_sent']}\n"
-                            f"• Uploaded: {result['leads_uploaded']}\n"
-                            f"• Skipped: {result['skipped_count']}"
-                        )
                         
-                        st.divider()
-                       
-                        st.info(" Note: Make sure your email has access to this sheet.")
+                        run_email_generation_layer()
+                        
+                        progress_bar.progress(90)
+                        st.success("🎉 Emails generated in Google Sheet!")
+                        
+                        # ---------------------------------------------------------
+                        # 👇 FINAL FILTER LOGIC: MATCHING UPLOADED COMPANIES 👇
+                        # ---------------------------------------------------------
+                        progress_text.text("📥 Preparing Final Download (Filtering for your uploaded companies)...")
+                        
+                        # Fetch ALL data from Sheet
+                        gc_final = connect_to_sheet()
+                        sh_final = gc_final.open(GOOGLE_SHEET_NAME)
+                        ws_final = sh_final.sheet1
+                        all_data = ws_final.get_all_records()
+                        full_df = pd.DataFrame(all_data)
 
-                        # 3. Final Button
-                        st.link_button(
-                            label="📊 Open Google Sheet", 
-                            url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
-                            type="primary"
-                        )
-                       
+                        # Ensure 'meta_company_name' exists in the Sheet data
+                        if "meta_company_name" not in full_df.columns and "Company" in full_df.columns:
+                            full_df.rename(columns={"Company": "meta_company_name"}, inplace=True)
+
+                        # FILTER: Keep only rows where 'meta_company_name' is in 'current_batch_companies'
+                        # We normalize (lowercase/strip) to avoid case-sensitivity issues
+                        
+                        batch_set = set(str(x).lower().strip() for x in current_batch_companies)
+                        
+                        final_df = full_df[full_df["meta_company_name"].astype(str).str.lower().str.strip().isin(batch_set)]
+                        
+                        if final_df.empty:
+                            st.error("❌ The filtered list is empty. Please check if Company Names in your CSV match the Google Sheet exactly.")
+                        else:
+                            # Keep only required columns for Instantly
+                            target_cols = ["meta_company_name", "Email Subject", "Email Body", "CEO Name", "Email ID"]
+                            available_cols = [c for c in target_cols if c in final_df.columns]
+                            final_output = final_df[available_cols]
+
+                            progress_bar.progress(100)
+                            
+                            # Save to Session State (Persistent)
+                            st.session_state.final_csv_ready = final_output.to_csv(index=False).encode("utf-8")
+                            st.session_state.processing_emails = False 
+                        
                     except Exception as e:
                         st.error(f"❌ An error occurred: {e}")
-            # ================= INSTANTLY CAMPAIGN CONTROL =================
- 
-            if st.session_state.get("instantly_ready"):
- 
+                        st.session_state.processing_emails = False
+
+            # ---------------------------------------------------------
+            # SHOW DOWNLOAD BUTTON (Persistent)
+            # ---------------------------------------------------------
+            if st.session_state.get("final_csv_ready"):
                 st.divider()
-                st.markdown("## 🚀 Instantly Campaign Control")
- 
-                if st.session_state.get("instantly_activated"):
-                    st.success("🟢 Campaign is already active")
-                else:
-                    if st.button("▶️ Activate Instantly Campaign"):
-                        with st.spinner("Activating campaign..."):
-                            try:
-                                campaign = activate_campaign(INSTANTLY_CAMPAIGN_ID)
- 
-                                if campaign.get("status") == 1:
-                                    st.session_state.instantly_activated = True
-                                    st.success("✅ Campaign activated successfully!")
-                                else:
-                                    st.warning(
-                                        f"⚠️ Campaign responded but status = {campaign.get('status')}"
-                                    )
- 
-                            except Exception as e:
-                                st.error(f"❌ Failed to activate campaign: {e}")
- 
- 
- 
-   
-    # --- ORIGINAL DOWNLOAD BUTTON ---
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
+                st.success("🚀 Ready for Instantly! Download only the NEW leads below.")
+                
+                st.download_button(
+                    label="📥 Download Final Leads (Only Current Batch)", 
+                    data=st.session_state.final_csv_ready, 
+                    file_name="Final_Instantly_Leads.csv", 
+                    mime="text/csv",
+                    key="final_download_btn_persistent"
+                )
+
+                st.info(" Note: Make sure your email has access to this sheet.")
+
+                st.link_button(
+                    label="📊 Open Google Sheet", 
+                    url="https://docs.google.com/spreadsheets/d/1yYKCYrILgvSrjeUObh2iE34tBie-Bkh6IIBAKiuaDRc/edit?gid=0#gid=0",
+                    type="primary"
+                )
+
+        # # --- ORIGINAL REPORT DOWNLOAD BUTTON (Outside the loop) ---
+        # if st.session_state.df is not None:
+        #     csv = st.session_state.df.to_csv(index=False).encode("utf-8")
+        #     st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")

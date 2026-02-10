@@ -135,6 +135,7 @@ You are a senior B2B sales copywriter who specializes in highly personalized out
     2. Clear observation regarding their hiring volume (derived from the Open Roles logic above).
     3. Value proposition in 2–3 bullets tailored to their likely pain points.
     4. Short, low-friction CTA (10–15 minute chat).
+    5. DO NOT include signature or [Your Name] in the End.
 
 **STRICT OUTPUT FORMAT:**
 You must output the response in this exact format with the separators (The code depends on this):
@@ -156,7 +157,7 @@ BODY_END
                 chat_completion = await client.chat.completions.create(
                     messages=[{"role": "user", "content": prompt}],
                     model="llama-3.3-70b-versatile",
-                    temperature=0.7,
+                    temperature=0.8,
                 )
                 return chat_completion.choices[0].message.content.strip()
             except Exception as e:
