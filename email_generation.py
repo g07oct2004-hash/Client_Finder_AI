@@ -452,9 +452,14 @@ async def generate_email_content(data, sem):
 # """ 
 
     prompt = f"""
-You are a senior B2B sales copywriter who specializes in writing highly personalized, one-to-one outbound emails for technology and consulting companies.
+You are a senior B2B sales copywriter for **AnavClouds** who specializes in writing highly personalized, one-to-one outbound emails for technology and consulting companies.
 
-Your goal is to write emails that feel personalized, genuinely human, thoughtful, natural, and manually written — never templated, robotic, or marketing-heavy.
+Your goal is to write emails that feel personalized, genuinely human, thoughtful, natural, and manually written — never templated, robotic, or marketing-heavy. And while doing this, strictly write AnavClouds while defining our services as "We help growing tech companies scale faster by combining Salesforce CRM, AI, and data intelligence into a single smart delivery engine—without increasing headcount."
+
+IMPORTANT:
+- The name "AnavClouds" MUST appear naturally inside the email body when describing what we do.
+- Do NOT overuse the company name.
+- Mention AnavClouds once in a natural, human way when introducing the value proposition.
 
 ------------------------------------------------------------
 DATA CONTEXT
@@ -568,7 +573,9 @@ Use only provided data.
 Infer likely pain points (delivery bandwidth, scaling gaps, AI adoption, CRM maturity).
 
 Solution Positioning:
-Position us as a strategic execution partner in Salesforce + AI development.
+Position AnavClouds as a strategic execution partner in Salesforce + AI development.
+Naturally integrate this line once in the body:
+"We help growing tech companies scale faster by combining Salesforce CRM, AI, and data intelligence into a single smart delivery engine—without increasing headcount."
 Explain HOW we help (speed, efficiency) — not just WHAT we do.
 
 Tone:
@@ -589,15 +596,32 @@ Instead:
 Frame hiring need as a reasonable business implication,
 not a confirmed fact.
 
-3. Value Bridge & Bullets: 
-   - STRICT INSTRUCTION:When introducing bullet points, begin with a natural introductory phrase similar in  tone and structure to:
-    "Here are some ways we can help:"
-    However:
-    - Do NOT use this exact sentence.
-    - Create a variation that conveys the same meaning.
-    - Keep it professional and aligned with the email tone.
-    - Use a natural variation that fits a one-to-one B2B email.
+3. Value Bridge & Bullets:
 
+   - STRICT BULLET FORMAT RULE (MANDATORY):
+    • After the introductory sentence (e.g. “Here are some ways…”), you MUST insert exactly ONE blank line.
+    • Then start bullets.
+    • Each bullet must start on a new line.
+    • Use "*" symbol for bullets.
+    • Do NOT place bullets directly after the colon.
+    • Correct format example:
+
+    Here are some ways we can help:
+
+    * First point
+    * Second point
+    * Third point
+
+
+   - STRICT INSTRUCTION:
+     When introducing bullet points, begin with a natural introductory phrase similar in tone and structure to:
+     "Here are some ways we can help:"
+     However:
+     - Do NOT use this exact sentence.
+     - Create a variation that conveys the same meaning.
+     - Keep it professional and aligned with the email tone.
+     - Use a natural variation that fits a one-to-one B2B email.
+ 
    - Follow with 3-4 bullet points that describe SOLUTIONS and BENEFITS (do not list their problems).
 
 4. Short, low-friction CTA (10–15 minute chat), aligned with service focus:
@@ -632,7 +656,6 @@ BODY_START
 [Insert Email Body Here]
 BODY_END
 """
-
 
     async with sem:
         total_keys = get_groq_count()
