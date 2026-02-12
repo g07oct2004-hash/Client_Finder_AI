@@ -8,7 +8,7 @@ import logging
 import requests
 import time
 import asyncio
-from instantly_mail_send import *
+# from instantly_mail_send import *
 import os
 from company_intel import enrich_companies_from_list
 from deep_company_research import run_deep_research_for_companies
@@ -32,15 +32,42 @@ COMPANY_INTEL_FILE = os.path.join(
     "Final_Company_Data_by_simple_approach.json"
 )
 
+intel_dir = os.path.dirname(COMPANY_INTEL_FILE)
+if not os.path.exists(intel_dir):
+    os.makedirs(intel_dir, exist_ok=True)
+    print(f"Created directory: {intel_dir}")
+
+
+if not os.path.exists(COMPANY_INTEL_FILE):
+    with open(COMPANY_INTEL_FILE, "w", encoding="utf-8") as f:
+        json.dump({}, f) 
+    print(f"Created empty intel file: {COMPANY_INTEL_FILE}")
+
 import copy
 
 def get_file_mtime(path: str) -> float:
     return os.path.getmtime(path) if os.path.exists(path) else 0.0
 
 
+# def load_company_intel(path) -> dict:
+#     with open(COMPANY_INTEL_FILE, "r", encoding="utf-8") as f:
+#         data = json.load(f)
+
+
+
 def load_company_intel(path) -> dict:
-    with open(COMPANY_INTEL_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    # Check if the file actually exists before trying to open it
+    if not os.path.exists(COMPANY_INTEL_FILE):
+        logger.warning(f"Intelligence file not found at {COMPANY_INTEL_FILE}. Starting with empty intel.")
+        return {} 
+
+    try:
+        with open(COMPANY_INTEL_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return copy.deepcopy(data)
+    except Exception as e:
+        logger.error(f"Error loading company intel: {e}")
+        return {}
 
     # 🔒 CRITICAL: prevent mutation bugs
     return copy.deepcopy(data)

@@ -569,23 +569,1417 @@
 
 
 
-#----------------------------
+# #----------------------------
+
+
+# import json
+# import time
+# import random
+# import requests
+# import os
+# import datetime
+# from bs4 import BeautifulSoup
+# from groq import Groq
+# from fake_useragent import UserAgent
+# from duckduckgo_search import DDGS
+# from dotenv import load_dotenv
+# from itertools import cycle
+# from API_rotation import get_groq_key,get_groq_count
+# # Load environment variables
+# load_dotenv()
+
+# # ==========================================
+# #  1. CONFIGURATION
+# # ==========================================
+
+# TARGET_COMPANIES = [
+#     "AnavClouds Software Solutions",
+#     "Fractal analytics",
+#     "Metacube",
+#     "AnavClouds analytics.ai",
+#     "Cyntexa"
+# ]
+
+# FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
+# RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+
+# os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# # ------------------------------------------
+# # ⏱ TIMING & DELAY SETTINGS
+# # ------------------------------------------
+
+# HTML_MAX_RETRIES = 3
+# LIBRARY_MAX_RETRIES = 3
+# SAFETY_MODE_LIMIT = 10
+
+# # BLOCK_RETRY_DELAY = (150, 250)
+# # QUERY_GAP_DELAY = (70, 90)
+# # SAFETY_MODE_DELAY = (60, 120)
+# # COMPANY_COOLDOWN_DELAY = (100, 150)
+# BLOCK_RETRY_DELAY = (20, 40)
+# QUERY_GAP_DELAY = (5, 8)
+# SAFETY_MODE_DELAY = (15, 25)
+# COMPANY_COOLDOWN_DELAY = (10, 20)
+# # ------------------------------------------
+# #  API KEY LOADER (UNCHANGED)
+# # ------------------------------------------
+
+# def get_api_keys(prefix):
+#     keys = []
+#     i = 1
+#     while True:
+#         key = os.environ.get(f"{prefix}_{i}")
+#         if key:
+#             keys.append(key)
+#             i += 1
+#         else:
+#             break
+#     return keys
+
+# GROQ_KEYS = get_api_keys("GROQ_API_KEY")
+
+# if not GROQ_KEYS:
+#     raise RuntimeError("No GROQ API keys found in environment variables")
+
+# #  GLOBAL ROUND-ROBIN ROTATOR
+# GROQ_KEY_ROTATOR = cycle(GROQ_KEYS)
+
+# # ==========================================
+# #  2. SAFE SAVE FUNCTIONS
+# # ==========================================
+
+# def save_raw_log(company, query, raw_text):
+#     try:
+#         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+#             f.write(
+#                 f"\n{'='*50}\n"
+#                 f"Company: {company}\nQuery: {query}\n"
+#                 f"{'-'*20}\n{raw_text}\n"
+#                 f"{'='*50}\n"
+#             )
+#     except Exception as e:
+#         print(f" Raw log save error: {e}")
+
+# def save_json(data):
+#     try:
+#         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+#             json.dump(data, f, indent=4, ensure_ascii=False)
+#     except Exception as e:
+#         print(f" JSON save error: {e}")
+
+# # ==========================================
+# #  3. SEARCH FUNCTIONS
+# # ==========================================
+
+# def search_via_html(query, time_filter=None):
+#     url = "https://html.duckduckgo.com/html/"
+#     headers = {
+#         "User-Agent": UserAgent().random,
+#         "Referer": "https://www.google.com/"
+#     }
+#     payload = {"q": query}
+#     if time_filter:
+#         payload["df"] = time_filter
+
+#     try:
+#         print(f"📡 HTML Search: {query}")
+#         response = requests.post(url, data=payload, headers=headers, timeout=15)
+
+#         if response.status_code in [403, 429] or "captcha" in response.text.lower():
+#             return "BLOCK"
+
+#         soup = BeautifulSoup(response.text, "html.parser")
+#         results = soup.find_all("div", class_="result__body", limit=10)
+
+#         if not results:
+#             return None
+
+#         text = ""
+#         for r in results:
+#             title = r.find("a", class_="result__a").get_text(strip=True)
+#             snippet = r.find("a", class_="result__snippet").get_text(strip=True)
+#             text += f"Source: {title}\nSnippet: {snippet}\n----------\n"
+
+#         return text.strip()
+
+#     except Exception:
+#         return "BLOCK"
+
+# def search_via_library(query, time_filter=None):
+#     try:
+#         timelimit = "y" if time_filter == "y" else None
+#         print(f" Library Search: {query}")
+
+#         with DDGS() as ddgs:
+#             results = list(ddgs.text(query, max_results=10, timelimit=timelimit))
+#             if not results:
+#                 return None
+
+#             text = ""
+#             for r in results:
+#                 text += f"Source: {r.get('title')}\nSnippet: {r.get('body')}\n----------\n"
+
+#             return text.strip()
+
+#     except Exception:
+#         return "BLOCK"
+
+# # ==========================================
+# #  4. GROQ ANALYSIS (KEY ROTATION HERE)
+# # ==========================================
+
+# def analyze_with_groq(company, raw_data):
+#     """
+#     Uses ONE Groq API key per call.
+#     Automatically rotates keys using round-robin.
+#     """
+#     # 1. Get the total count of keys from the manager
+#     total_keys = get_groq_count()
+    
+#     # Safety: Ensure we try at least once even if count returns 0 (unlikely)
+#     max_retries = max(1, total_keys)
+#     for _ in range(max_retries):
+#         try:
+#             # api_key = next(GROQ_KEY_ROTATOR)
+#             api_key = get_groq_key()
+#             client = Groq(api_key=api_key)
+
+#             completion = client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {
+#                         "role": "system",
+#                         "content": (
+#                             "Extract 'Annual Revenue' and 'Total Employee Count'. "
+#                             "Return JSON only: "
+#                             "{'Annual Revenue': '...', 'Total Employee Count': '...'}"
+#                         )
+#                     },
+#                     {
+#                         "role": "user",
+#                         "content": f"Company: {company}\nData:\n{raw_data}"
+#                     }
+#                 ],
+#                 response_format={"type": "json_object"}
+#             )
+
+#             return json.loads(completion.choices[0].message.content)
+
+#         except Exception as e:
+#             print(f" Groq key failed, rotating key... {e}")
+#             time.sleep(0.5)
+
+#     return {
+#         "Annual Revenue": "Not Found",
+#         "Total Employee Count": "Not Found"
+#     }
+
+# # ==========================================
+# #  5. MAIN PIPELINE
+# # ==========================================
+
+# def main():
+#     final_data = {}
+
+#     if os.path.exists(FINAL_OUTPUT_FILE):
+#         try:
+#             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+#                 content = f.read().strip()
+#                 if content:
+#                     final_data = json.loads(content)
+#         except Exception:
+#             final_data = {}
+
+#     prev_year = datetime.datetime.now().year - 1
+#     safety_mode_steps_remaining = 0
+
+#     print(f"🚀 Starting extraction for {len(TARGET_COMPANIES)} companies")
+
+#     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+#         if company in final_data:
+#             print(f" Skipping {company}")
+#             continue
+
+#         current_mode = "LIBRARY_MODE" if safety_mode_steps_remaining > 0 else "HTML_MODE"
+#         safety_mode_steps_remaining = max(0, safety_mode_steps_remaining - 1)
+
+#         print(f"\n[{idx}] Processing: {company}")
+
+#         queries = [
+#             {"text": f"site:rocketreach.co {company} employee size", "filter": None},
+#             {"text": f"{company} annual revenue {prev_year}", "filter": "y"}
+#         ]
+
+#         raw_data = ""
+
+#         for q in queries:
+#             result = None
+
+#             if current_mode == "HTML_MODE":
+#                 for _ in range(HTML_MAX_RETRIES):
+#                     result = search_via_html(q["text"], q["filter"])
+#                     if result != "BLOCK":
+#                         break
+#                     time.sleep(random.uniform(*BLOCK_RETRY_DELAY))
+
+#                 if result == "BLOCK":
+#                     safety_mode_steps_remaining = SAFETY_MODE_LIMIT
+#                     current_mode = "LIBRARY_MODE"
+#                     result = None
+
+#             if current_mode == "LIBRARY_MODE":
+#                 for _ in range(LIBRARY_MAX_RETRIES):
+#                     result = search_via_library(q["text"], q["filter"])
+#                     if result != "BLOCK":
+#                         break
+#                     time.sleep(random.uniform(*BLOCK_RETRY_DELAY))
+
+#             if result and result != "BLOCK":
+#                 raw_data += f"\nQuery: {q['text']}\n{result}\n"
+#                 save_raw_log(company, q["text"], result)
+
+#             time.sleep(
+#                 random.uniform(*SAFETY_MODE_DELAY)
+#                 if current_mode == "LIBRARY_MODE"
+#                 else random.uniform(*QUERY_GAP_DELAY)
+#             )
+
+#         if raw_data.strip():
+#             result = analyze_with_groq(company, raw_data)
+#             final_data[company] = result
+#             save_json(final_data)
+#             print(f" Saved: {result}")
+#         else:
+#             final_data[company] = {
+#                 "Annual Revenue": "Not Found",
+#                 "Total Employee Count": "Not Found"
+#             }
+#             save_json(final_data)
+
+#         time.sleep(random.uniform(*COMPANY_COOLDOWN_DELAY))
+
+#     print("\n🎉 All companies processed successfully")
+
+
+# def enrich_companies_from_list(company_list):
+#     global TARGET_COMPANIES
+#     TARGET_COMPANIES = list(set(company_list))
+#     main()
+# # ==========================================
+# # 🟢 ENTRY POINT
+# # ==========================================
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+# import json
+# import time
+# import random
+# import requests
+# import os
+# import datetime
+# from bs4 import BeautifulSoup
+# from groq import Groq
+# from fake_useragent import UserAgent
+# from dotenv import load_dotenv
+# from itertools import cycle
+# from API_rotation import get_groq_key, get_groq_count
+
+# # Load environment variables
+# load_dotenv()
+
+# # ==========================================
+# #  1. CONFIGURATION
+# # ==========================================
+
+# TARGET_COMPANIES = [
+#     "AnavClouds Software Solutions",
+#     "Fractal analytics",
+#     "Metacube",
+#     "Cyntexa"
+# ]
+
+# FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
+# RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+
+# os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# # ------------------------------------------
+# # ⏱ TIMING & DELAY SETTINGS
+# # ------------------------------------------
+
+# HTML_MAX_RETRIES = 3
+
+# # Delays (in seconds)
+# BLOCK_RETRY_DELAY = (20, 40)
+# QUERY_GAP_DELAY = (6, 10)
+# COMPANY_COOLDOWN_DELAY = (10, 20)
+
+# # ------------------------------------------
+# #  API KEY LOADER (UNCHANGED)
+# # ------------------------------------------
+
+# def get_api_keys(prefix):
+#     keys = []
+#     i = 1
+#     while True:
+#         key = os.environ.get(f"{prefix}_{i}")
+#         if key:
+#             keys.append(key)
+#             i += 1
+#         else:
+#             break
+#     return keys
+
+# GROQ_KEYS = get_api_keys("GROQ_API_KEY")
+
+# if not GROQ_KEYS:
+#     raise RuntimeError("No GROQ API keys found in environment variables")
+
+# #  GLOBAL ROUND-ROBIN ROTATOR
+# GROQ_KEY_ROTATOR = cycle(GROQ_KEYS)
+
+# # ==========================================
+# #  2. SAFE SAVE FUNCTIONS
+# # ==========================================
+
+# def save_raw_log(company, query, raw_text):
+#     try:
+#         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+#             f.write(
+#                 f"\n{'='*50}\n"
+#                 f"Company: {company}\nQuery: {query}\n"
+#                 f"{'-'*20}\n{raw_text}\n"
+#                 f"{'='*50}\n"
+#             )
+#     except Exception as e:
+#         print(f" Raw log save error: {e}")
+
+# def save_json(data):
+#     try:
+#         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+#             json.dump(data, f, indent=4, ensure_ascii=False)
+#     except Exception as e:
+#         print(f" JSON save error: {e}")
+
+# # ==========================================
+# #  3. SEARCH FUNCTIONS (HTML ONLY)
+# # ==========================================
+
+# def search_via_html(query, time_filter=None):
+#     url = "https://html.duckduckgo.com/html/"
+#     headers = {
+#         "User-Agent": UserAgent().random,
+#         "Referer": "https://www.google.com/"
+#     }
+#     payload = {"q": query}
+#     if time_filter:
+#         payload["df"] = time_filter
+
+#     try:
+#         print(f"📡 HTML Search: {query}")
+#         response = requests.post(url, data=payload, headers=headers, timeout=15)
+
+#         # If we are blocked, return "BLOCK" so the main loop handles it
+#         if response.status_code in [403, 429] or "captcha" in response.text.lower():
+#             return "BLOCK"
+
+#         soup = BeautifulSoup(response.text, "html.parser")
+#         results = soup.find_all("div", class_="result__body", limit=10)
+
+#         if not results:
+#             return None
+
+#         text = ""
+#         for r in results:
+#             title_tag = r.find("a", class_="result__a")
+#             snippet_tag = r.find("a", class_="result__snippet")
+            
+#             # Safety check if tags exist
+#             title = title_tag.get_text(strip=True) if title_tag else "No Title"
+#             snippet = snippet_tag.get_text(strip=True) if snippet_tag else "No Snippet"
+            
+#             text += f"Source: {title}\nSnippet: {snippet}\n----------\n"
+
+#         return text.strip()
+
+#     except Exception as e:
+#         print(f"Search Error: {e}")
+#         return "BLOCK"
+
+# # ==========================================
+# #  4. GROQ ANALYSIS (KEY ROTATION HERE)
+# # ==========================================
+
+# def analyze_with_groq(company, raw_data):
+#     """
+#     Uses ONE Groq API key per call.
+#     Automatically rotates keys using round-robin.
+#     """
+#     # 1. Get the total count of keys from the manager
+#     total_keys = get_groq_count()
+    
+#     # Safety: Ensure we try at least once even if count returns 0
+#     max_retries = max(1, total_keys)
+    
+#     for _ in range(max_retries):
+#         try:
+#             # api_key = next(GROQ_KEY_ROTATOR)
+#             api_key = get_groq_key()
+#             client = Groq(api_key=api_key)
+
+#             completion = client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {
+#                         "role": "system",
+#                         "content": (
+#                             "Extract 'Annual Revenue' and 'Total Employee Count'. "
+#                             "Return JSON only: "
+#                             "{'Annual Revenue': '...', 'Total Employee Count': '...'}"
+#                         )
+#                     },
+#                     {
+#                         "role": "user",
+#                         "content": f"Company: {company}\nData:\n{raw_data}"
+#                     }
+#                 ],
+#                 response_format={"type": "json_object"}
+#             )
+
+#             return json.loads(completion.choices[0].message.content)
+
+#         except Exception as e:
+#             print(f" Groq key failed, rotating key... {e}")
+#             time.sleep(0.5)
+
+#     return {
+#         "Annual Revenue": "Not Found",
+#         "Total Employee Count": "Not Found"
+#     }
+
+# # ==========================================
+# #  5. MAIN PIPELINE
+# # ==========================================
+
+# def main():
+#     final_data = {}
+
+#     # Load existing data to avoid re-processing
+#     if os.path.exists(FINAL_OUTPUT_FILE):
+#         try:
+#             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+#                 content = f.read().strip()
+#                 if content:
+#                     final_data = json.loads(content)
+#         except Exception:
+#             final_data = {}
+
+#     prev_year = datetime.datetime.now().year - 1
+
+#     print(f"🚀 Starting extraction for {len(TARGET_COMPANIES)} companies (HTML ONLY MODE)")
+
+#     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+#         if company in final_data:
+#             print(f" Skipping {company}")
+#             continue
+
+#         print(f"\n[{idx}] Processing: {company}")
+
+#         queries = [
+#             {"text": f"site:rocketreach.co {company} employee size", "filter": None},
+#             {"text": f"{company} annual revenue {prev_year}", "filter": "y"}
+#         ]
+
+#         raw_data = ""
+
+#         for q in queries:
+#             result = None
+
+#             # Retry logic for HTML blocks
+#             for attempt in range(HTML_MAX_RETRIES):
+#                 result = search_via_html(q["text"], q["filter"])
+                
+#                 if result == "BLOCK":
+#                     print(f"⚠️  Blocked (Attempt {attempt+1}/{HTML_MAX_RETRIES}). Waiting...")
+#                     time.sleep(random.uniform(*BLOCK_RETRY_DELAY))
+#                 else:
+#                     # Success or just no results (but not blocked)
+#                     break 
+
+#             if result and result != "BLOCK":
+#                 raw_data += f"\nQuery: {q['text']}\n{result}\n"
+#                 save_raw_log(company, q["text"], result)
+
+#             # Standard delay between queries to be polite
+#             time.sleep(random.uniform(*QUERY_GAP_DELAY))
+
+#         # Only run Groq if we actually found data
+#         if raw_data.strip():
+#             result = analyze_with_groq(company, raw_data)
+#             final_data[company] = result
+#             save_json(final_data)
+#             print(f" Saved: {result}")
+#         else:
+#             final_data[company] = {
+#                 "Annual Revenue": "Not Found",
+#                 "Total Employee Count": "Not Found"
+#             }
+#             save_json(final_data)
+
+#         # Delay between companies
+#         time.sleep(random.uniform(*COMPANY_COOLDOWN_DELAY))
+
+#     print("\n🎉 All companies processed successfully")
+
+
+# def enrich_companies_from_list(company_list):
+#     global TARGET_COMPANIES
+#     TARGET_COMPANIES = list(set(company_list))
+#     main()
+
+# # ==========================================
+# # 🟢 ENTRY POINT
+# # ==========================================
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+
+# #-------------------------------------------------------------------------------
+
+# # import json
+# # import time
+# # import os
+# # import datetime
+# # import random
+# # from dotenv import load_dotenv
+# # from groq import Groq
+# # from tavily import TavilyClient
+
+# # # ==========================================
+# # #  IMPORT KEY ROTATION LOGIC
+# # # ==========================================
+# # # Ensure ALL these functions exist in your API_rotation.py
+# # from API_rotation import (
+# #     get_groq_key, 
+# #     get_groq_count, 
+# #     get_tavily_key, 
+# #     get_tavily_count
+# # )
+
+# # # Load environment variables
+# # load_dotenv()
+
+# # # ==========================================
+# # #  1. CONFIGURATION
+# # # ==========================================
+
+# # # Default list (used if ran directly)
+# # TARGET_COMPANIES = [
+# #     "AnavClouds Software Solutions",
+# #     "Fractal analytics",
+# #     "Metacube",
+# #     "Cyntexa"
+# # ]
+
+# # # Final clean data (JSON)
+# # FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
+# # # Raw search logs (Text file for debugging)
+# # RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+
+# # os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# # # ------------------------------------------
+# # #  TIMING SETTINGS
+# # # ------------------------------------------
+# # COMPANY_COOLDOWN_DELAY = (2, 5)
+
+# # # ==========================================
+# # #  2. SAVE FUNCTIONS
+# # # ==========================================
+
+# # def save_raw_log(company, query, raw_text):
+# #     """
+# #     Saves the raw text result from Tavily to a .txt file for debugging.
+# #     """
+# #     try:
+# #         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+# #             f.write(
+# #                 f"\n{'='*50}\n"
+# #                 f"Company: {company}\nQuery: {query}\n"
+# #                 f"{'-'*20}\n{raw_text}\n"
+# #                 f"{'='*50}\n"
+# #             )
+# #     except Exception as e:
+# #         print(f" Raw log save error: {e}")
+
+# # def save_json(data):
+# #     """
+# #     Saves the final structured data to a .json file.
+# #     """
+# #     try:
+# #         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+# #             json.dump(data, f, indent=4, ensure_ascii=False)
+# #     except Exception as e:
+# #         print(f" JSON save error: {e}")
+
+# # # ==========================================
+# # #  3. SEARCH FUNCTION (TAVILY WITH ROTATION)
+# # # ==========================================
+
+# # def search_via_tavily(company):
+# #     """
+# #     Rotates through available Tavily keys using get_tavily_count().
+# #     """
+# #     current_year = datetime.datetime.now().year
+# #     prev_year = current_year - 1
+    
+# #     # Construct a specific query
+# #     query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+
+# #     # 1. Get total available keys to determine retry limit
+# #     total_keys = get_tavily_count()
+# #     max_retries = max(1, total_keys)
+    
+# #     for attempt in range(max_retries):
+# #         try:
+# #             # 2. Get a fresh key from rotation logic
+# #             tavily_key = get_tavily_key()
+# #             client = TavilyClient(api_key=tavily_key)
+
+# #             print(f"🔎 Tavily Search (Attempt {attempt+1}/{max_retries}): {query}")
+            
+# #             # 3. Execute Search
+# #             # search_depth="advanced" costs 2 credits but gives deeper results
+# #             response = client.search(
+# #                 query=query,
+# #                 search_depth="advanced",
+# #                 max_results=2,
+# #                 include_answer=False
+# #             )
+
+# #             # 4. Format results into a string
+# #             context_text = ""
+# #             for result in response.get("results", []):
+# #                 context_text += f"Source: {result['title']}\nURL: {result['url']}\nContent: {result['content']}\n----------\n"
+
+# #             return context_text, query
+
+# #         except Exception as e:
+# #             print(f"⚠️ Tavily Key Failed (Attempt {attempt+1}): {e}")
+# #             time.sleep(1) # Short wait before rotating to next key
+
+# #     print("❌ All Tavily keys failed or ran out of credits.")
+# #     return None, query
+
+# # # ==========================================
+# # #  4. GROQ ANALYSIS (EXISTING ROTATION)
+# # # ==========================================
+
+# # def analyze_with_groq(company, raw_data):
+# #     """
+# #     Uses Groq key rotation to extract JSON from the raw text.
+# #     """
+# #     total_keys = get_groq_count()
+# #     max_retries = max(1, total_keys)
+
+# #     for _ in range(max_retries):
+# #         try:
+# #             # Get key from rotation logic
+# #             api_key = get_groq_key()
+# #             client = Groq(api_key=api_key)
+
+# #             completion = client.chat.completions.create(
+# #                 model="llama-3.3-70b-versatile",
+# #                 messages=[
+# #                     {
+# #                         "role": "system",
+# #                         "content": (
+# #                             "You are an expert Data Analyst. "
+# #                             "Extract 'Annual Revenue' (include currency) and 'Total Employee Count'. "
+# #                             "Extract the right or exact Information after reading Company info."
+# #                             "If the exact number is not found, look for the most recent estimate. "
+# #                             "Return strict JSON only: "
+# #                             "{\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"}"
+# #                         )
+# #                     },
+# #                     {
+# #                         "role": "user",
+# #                         "content": f"Company: {company}\nContext Data:\n{raw_data}"
+# #                     }
+# #                 ],
+# #                 response_format={"type": "json_object"}
+# #             )
+
+# #             return json.loads(completion.choices[0].message.content)
+
+# #         except Exception as e:
+# #             print(f"⚠️ Groq key failed, rotating... Error: {e}")
+# #             time.sleep(0.5)
+
+# #     return {
+# #         "Annual Revenue": "Not Found",
+# #         "Total Employee Count": "Not Found"
+# #     }
+
+# # # ==========================================
+# # #  5. MAIN PIPELINE
+# # # ==========================================
+
+# # def main():
+# #     final_data = {}
+
+# #     # Load existing data to avoid re-processing
+# #     if os.path.exists(FINAL_OUTPUT_FILE):
+# #         try:
+# #             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+# #                 content = f.read().strip()
+# #                 if content:
+# #                     final_data = json.loads(content)
+# #         except Exception:
+# #             final_data = {}
+
+# #     print(f"🚀 Starting extraction for {len(TARGET_COMPANIES)} companies (TAVILY MODE)")
+
+# #     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+# #         if company in final_data:
+# #             print(f"⏭️  Skipping {company}")
+# #             continue
+
+# #         print(f"\n[{idx}] Processing: {company}")
+
+# #         # 1. Search via Tavily (with rotation & count check)
+# #         raw_context, used_query = search_via_tavily(company)
+
+# #         if raw_context:
+# #             # Save Raw Log (Text File)
+# #             save_raw_log(company, used_query, raw_context)
+
+# #             # 2. Extract via Groq (with rotation)
+# #             result = analyze_with_groq(company, raw_context)
+            
+# #             # 3. Save Final JSON
+# #             final_data[company] = result
+# #             save_json(final_data)
+# #             print(f"✅ Saved: {result}")
+# #         else:
+# #             print("❌ No data found.")
+# #             final_data[company] = {
+# #                 "Annual Revenue": "Not Found",
+# #                 "Total Employee Count": "Not Found"
+# #             }
+# #             save_json(final_data)
+
+# #         # Politeness delay
+# #         time.sleep(random.uniform(*COMPANY_COOLDOWN_DELAY))
+
+# #     print("\n🎉 All companies processed successfully")
+
+# # # ==========================================
+# # #  6. EXTERNAL CALL HANDLER
+# # # ==========================================
+
+# # def enrich_companies_from_list(company_list):
+# #     """
+# #     This function allows project_2.py to pass a list of companies.
+# #     """
+# #     global TARGET_COMPANIES
+# #     # Remove duplicates and update the global list
+# #     TARGET_COMPANIES = list(set(company_list))
+# #     # Run the main pipeline
+# #     main()
+
+# # # ==========================================
+# # #  ENTRY POINT
+# # # ==========================================
+
+# # if __name__ == "__main__":
+# #     main()
+
+
+
+
+
+# import json
+# import time
+# import random
+# import requests
+# import os
+# import datetime
+# from bs4 import BeautifulSoup
+# from groq import Groq
+# from fake_useragent import UserAgent
+# from dotenv import load_dotenv
+# from tavily import TavilyClient
+
+# # API Rotation Imports (Ensure these exist in your project)
+# from API_rotation import (
+#     get_groq_key,
+#     get_groq_count,
+#     get_tavily_key,
+#     get_tavily_count
+# )
+
+# load_dotenv()
+
+# # ==========================================
+# #  1. CONFIGURATION
+# # ==========================================
+
+# TARGET_COMPANIES = [
+#     "AnavClouds Software Solutions",
+#     "Fractal analytics",
+#     "Metacube",
+#     "Cyntexa"
+# ]
+
+# FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_Hybrid_Debug.json"
+# RAW_DEBUG_FILE = "raw_search_logs_hybrid_debug.txt"
+
+# os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# HTML_MAX_RETRIES = 2
+# BLOCK_RETRY_DELAY = (2, 5)
+# QUERY_GAP_DELAY = (2, 4)
+# COMPANY_COOLDOWN_DELAY = (3, 6)
+
+# # ==========================================
+# #  2. SAVE FUNCTIONS
+# # ==========================================
+
+# def save_raw_log(company, source, raw_text):
+#     try:
+#         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+#             f.write(f"\n{'='*50}\nCompany: {company}\nSource: {source}\n{'-'*20}\n{raw_text}\n{'='*50}\n")
+#     except Exception as e:
+#         print(f" Raw log save error: {e}")
+
+# def save_json(data):
+#     try:
+#         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+#             json.dump(data, f, indent=4, ensure_ascii=False)
+#     except Exception as e:
+#         print(f" JSON save error: {e}")
+
+# # ==========================================
+# #  3. DEBUGGED DUCKDUCKGO SEARCH
+# # ==========================================
+
+# def search_via_html(query, time_filter=None):
+#     url = "https://html.duckduckgo.com/html/"
+#     headers = {
+#         "User-Agent": UserAgent().random,
+#         "Referer": "https://www.google.com/"
+#     }
+#     payload = {"q": query}
+#     if time_filter:
+#         payload["df"] = time_filter
+
+#     try:
+#         print(f"    👉 Sending Request: {query[:40]}...")
+#         response = requests.post(url, data=payload, headers=headers, timeout=15)
+        
+#         # --- DEBUG PRINT ---
+#         print(f"    📡 Status Code: {response.status_code}")
+        
+#         # Check Blocking
+#         if response.status_code in [403, 429]:
+#             print(f"    🛑 BLOCKED by Server (Status {response.status_code})")
+#             return "BLOCK"
+            
+#         if "captcha" in response.text.lower():
+#             print(f"    🛑 BLOCKED by CAPTCHA detected in text.")
+#             return "BLOCK"
+
+#         soup = BeautifulSoup(response.text, "html.parser")
+#         results = soup.find_all("div", class_="result__body", limit=10)
+
+#         # --- DEBUG PRINT ---
+#         print(f"    🔍 Results Extracted: {len(results)}")
+
+#         if not results:
+#             print("    ⚠️ No results found in HTML (Empty Page?)")
+#             return None
+
+#         text = ""
+#         for r in results:
+#             title_tag = r.find("a", class_="result__a")
+#             snippet_tag = r.find("a", class_="result__snippet")
+            
+#             title = title_tag.get_text(strip=True) if title_tag else "No Title"
+#             snippet = snippet_tag.get_text(strip=True) if snippet_tag else "No Snippet"
+            
+#             text += f"Source: {title}\nSnippet: {snippet}\n----------\n"
+
+#         return text.strip()
+
+#     except Exception as e:
+#         print(f"    💥 Exception Error: {e}")
+#         return "BLOCK"
+
+# # ==========================================
+# #  4. TAVILY FALLBACK
+# # ==========================================
+
+# def search_via_tavily(company):
+#     current_year = datetime.datetime.now().year
+#     prev_year = current_year - 1
+#     query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+    
+#     total_keys = get_tavily_count()
+#     max_retries = max(1, total_keys)
+    
+#     print(f"  ↳ 🦅 Switching to Tavily Search...")
+
+#     for attempt in range(max_retries):
+#         try:
+#             tavily_key = get_tavily_key()
+#             if not tavily_key: return None
+#             client = TavilyClient(api_key=tavily_key)
+#             response = client.search(query=query, search_depth="advanced", max_results=2, include_answer=False)
+            
+#             context_text = ""
+#             for result in response.get("results", []):
+#                 context_text += f"Title: {result['title']}\nContent: {result['content']}\n----------\n"
+#             return context_text
+#         except Exception as e:
+#             print(f"    ⚠️ Tavily Error: {e}")
+#             time.sleep(1)
+#     return None
+
+# # ==========================================
+# #  5. GROQ ANALYSIS
+# # ==========================================
+
+# def analyze_with_groq(company, raw_data):
+#     # (Same Logic as before, kept short for brevity)
+#     max_retries = max(1, get_groq_count())
+#     for _ in range(max_retries):
+#         try:
+#             api_key = get_groq_key()
+#             client = Groq(api_key=api_key)
+#             completion = client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {
+#                         "role": "system",
+#                         "content": (
+#                             "Extract 'Annual Revenue' and 'Total Employee Count'. "
+#                             "Return JSON only: "
+#                             "{'Annual Revenue': '...', 'Total Employee Count': '...'}"
+#                         )
+#                     },
+#                     {
+#                         "role": "user",
+#                         "content": f"Company: {company}\nData:\n{raw_data}"
+#                     }
+#                 ],
+#                 response_format={"type": "json_object"}
+#             )
+
+#             return json.loads(completion.choices[0].message.content)
+               
+#         except Exception:
+#             time.sleep(0.5)
+#     return {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
+
+# # ==========================================
+# #  6. MAIN LOOP
+# # ==========================================
+
+# def main():
+#     final_data = {}
+#     prev_year = datetime.datetime.now().year - 1
+#     print(f"🚀 Starting Extraction with DEBUG LOGS")
+
+#     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+#         print(f"\n[{idx}] Processing: {company}")
+        
+#         # --- DDG ATTEMPT ---
+#         raw_data = ""
+#         source_used = "None"
+#         ddg_success = False
+        
+#         queries = [
+#             {"text": f"site:rocketreach.co {company} employee size", "filter": None},
+#             {"text": f"{company} annual revenue {prev_year}", "filter": "y"}
+#         ]
+        
+#         for q in queries:
+#             print(f"  ↳ 🦆 Query: {q['text']}")
+#             result = None
+#             for attempt in range(HTML_MAX_RETRIES):
+#                 result = search_via_html(q["text"], q["filter"])
+#                 if result == "BLOCK":
+#                     print(f"    ⏳ Waiting 2s before retry...")
+#                     time.sleep(2)
+#                 else:
+#                     break 
+            
+#             if result and result != "BLOCK":
+#                 raw_data += f"\nQuery: {q['text']}\n{result}\n"
+#             else:
+#                 print("    ❌ This query failed/blocked.")
+
+#         if raw_data.strip():
+#             ddg_success = True
+#             source_used = "DuckDuckGo"
+#             print("  ✅ DDG Success! Data Collected.")
+#         else:
+#             print("  ⚠️ All DDG queries failed. Invoking Fallback.")
+
+#         # --- FALLBACK ---
+#         if not ddg_success:
+#             tavily_data = search_via_tavily(company)
+#             if tavily_data:
+#                 raw_data = tavily_data
+#                 source_used = "Tavily"
+#                 print("  ✅ Tavily Success!")
+#             else:
+#                 print("  ❌ Tavily Failed too.")
+
+#         # --- SAVE ---
+#         if raw_data.strip():
+#             result_json = analyze_with_groq(company, raw_data)
+#             result_json["Source_Method"] = source_used
+#             final_data[company] = result_json
+#             save_json(final_data)
+#             print(f"  💾 Saved: {result_json}")
+        
+#         time.sleep(2)
+
+#     print("\n🎉 Done")
+
+# def enrich_companies_from_list(company_list):
+#     """
+#     This function allows project_2.py to pass a list of companies.
+#     """
+#     global TARGET_COMPANIES
+#     # Remove duplicates and update the global list
+#     TARGET_COMPANIES = list(set(company_list))
+#     # Run the main pipeline
+#     main()
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+# import json
+# import time
+# import random
+# import requests
+# import os
+# import datetime
+# from bs4 import BeautifulSoup
+# from groq import Groq
+# from fake_useragent import UserAgent
+# from dotenv import load_dotenv
+# from tavily import TavilyClient
+
+# # API Rotation Imports
+# from API_rotation import (
+#     get_groq_key,
+#     get_groq_count,
+#     get_tavily_key,
+#     get_tavily_count
+# )
+
+# load_dotenv()
+
+# # ==========================================
+# #  1. CONFIGURATION
+# # ==========================================
+
+# TARGET_COMPANIES = [
+#     "AnavClouds Software Solutions",
+#     "Fractal analytics",
+#     "Metacube",
+#     "Cyntexa"
+# ]
+
+# FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
+# RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+
+# os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# HTML_MAX_RETRIES = 2
+# BLOCK_RETRY_DELAY = (2, 5)
+# QUERY_GAP_DELAY = (2, 4)
+# COMPANY_COOLDOWN_DELAY = (3, 6)
+
+# # ==========================================
+# #  2. SAVE FUNCTIONS
+# # ==========================================
+
+# def save_raw_log(company, source, raw_text):
+#     try:
+#         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+#             f.write(f"\n{'='*50}\nCompany: {company}\nSource: {source}\n{'-'*20}\n{raw_text}\n{'='*50}\n")
+#     except Exception as e:
+#         print(f" Raw log save error: {e}")
+
+# def save_json(data):
+#     try:
+#         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+#             json.dump(data, f, indent=4, ensure_ascii=False)
+#     except Exception as e:
+#         print(f" JSON save error: {e}")
+
+# # ==========================================
+# #  3. SEARCH FUNCTIONS (STRICT DDG)
+# # ==========================================
+
+# def search_via_html(query, time_filter=None):
+#     url = "https://html.duckduckgo.com/html/"
+#     headers = {
+#         "User-Agent": UserAgent().random,
+#         "Referer": "https://www.google.com/"
+#     }
+#     payload = {"q": query}
+#     if time_filter:
+#         payload["df"] = time_filter
+
+#     try:
+#         print(f"    👉 Sending Request: {query[:40]}...")
+#         response = requests.post(url, data=payload, headers=headers, timeout=15)
+        
+#         # STRICT CHECKING FOR BLOCKS
+#         if response.status_code != 200:
+#             print(f"    🛑 BLOCKED by Server (Status {response.status_code})")
+#             return "BLOCK"
+            
+#         if "captcha" in response.text.lower():
+#             print(f"    🛑 BLOCKED by CAPTCHA detected.")
+#             return "BLOCK"
+
+#         soup = BeautifulSoup(response.text, "html.parser")
+#         results = soup.find_all("div", class_="result__body", limit=10)
+
+#         if not results:
+#             print("    ⚠️ No results found in HTML (Soft Block or Empty)")
+#             return "BLOCK" # Treat empty results as block to trigger Tavily
+
+#         text = ""
+#         for r in results:
+#             title_tag = r.find("a", class_="result__a")
+#             snippet_tag = r.find("a", class_="result__snippet")
+            
+#             title = title_tag.get_text(strip=True) if title_tag else "No Title"
+#             snippet = snippet_tag.get_text(strip=True) if snippet_tag else "No Snippet"
+            
+#             text += f"Source: {title}\nSnippet: {snippet}\n----------\n"
+
+#         return text.strip()
+
+#     except Exception as e:
+#         print(f"    💥 Exception Error: {e}")
+#         return "BLOCK"
+
+# # ==========================================
+# #  4. TAVILY FALLBACK
+# # ==========================================
+
+# def search_via_tavily(company):
+#     current_year = datetime.datetime.now().year
+#     prev_year = current_year - 1
+#     query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+    
+#     total_keys = get_tavily_count()
+#     max_retries = max(1, total_keys)
+    
+#     print(f"  ↳ 🦅 Switching to Tavily Search...")
+
+#     for attempt in range(max_retries):
+#         try:
+#             tavily_key = get_tavily_key()
+#             if not tavily_key: return None
+#             client = TavilyClient(api_key=tavily_key)
+#             response = client.search(query=query, search_depth="advanced", max_results=2, include_answer=False)
+            
+#             context_text = ""
+#             for result in response.get("results", []):
+#                 context_text += f"Title: {result['title']}\nContent: {result['content']}\n----------\n"
+#             return context_text
+#         except Exception as e:
+#             print(f"    ⚠️ Tavily Error: {e}")
+#             time.sleep(1)
+#     return None
+
+# # ==========================================
+# #  5. GROQ ANALYSIS
+# # ==========================================
+
+# def analyze_with_groq(company, raw_data):
+#     """
+#     Uses Groq API to extract specific fields.
+#     """
+#     max_retries = max(1, get_groq_count())
+    
+#     for _ in range(max_retries):
+#         try:
+#             api_key = get_groq_key()
+#             client = Groq(api_key=api_key)
+            
+#             # --- YEH RAHA AAPKA PROMPT ---
+#             completion = client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {
+#                         "role": "system", 
+#                         "content": (
+#                             "Extract 'Annual Revenue' (with currency) and 'Total Employee Count'. "
+#                             "Return strict JSON format only: "
+#                             "{\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"} "
+#                             "If information is not found, write 'Not Found'."
+#                         )
+#                     },
+#                     {
+#                         "role": "user", 
+#                         "content": f"Company: {company}\nData:\n{raw_data}"
+#                     }
+#                 ],
+#                 response_format={"type": "json_object"}
+#             )
+#             return json.loads(completion.choices[0].message.content)
+
+#         except Exception as e:
+#             print(f"    ⚠️ Groq Error: {e}")
+#             time.sleep(0.5)
+
+#     return {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
+
+# # ==========================================
+# #  6. MAIN PIPELINE
+# # ==========================================
+
+# def main():
+#     final_data = {}
+#     prev_year = datetime.datetime.now().year - 1
+    
+#     # Load existing data
+#     if os.path.exists(FINAL_OUTPUT_FILE):
+#         try:
+#             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+#                 final_data = json.loads(f.read().strip() or "{}")
+#         except:
+#             final_data = {}
+
+#     print(f"🚀 Starting Extraction for {len(TARGET_COMPANIES)} companies (Hybrid Mode)")
+
+#     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+#         if company in final_data and final_data[company].get("Source_Method", "Failed") != "Failed":
+#              print(f"\n[{idx}] Skipping {company} (Already Done)")
+#              continue
+
+#         print(f"\n[{idx}] Processing: {company}")
+        
+#         # --- DDG ATTEMPT ---
+#         raw_data = ""
+#         source_used = "None"
+#         ddg_success = False
+        
+#         queries = [
+#             {"text": f"site:rocketreach.co {company} employee size", "filter": None},
+#             {"text": f"{company} annual revenue {prev_year}", "filter": "y"}
+#         ]
+        
+#         for q in queries:
+#             # If one query already blocked, don't try the next one, go straight to Tavily
+#             if raw_data == "BLOCK": break 
+
+#             print(f"  ↳ 🦆 Query: {q['text']}")
+#             result = None
+            
+#             for attempt in range(HTML_MAX_RETRIES):
+#                 result = search_via_html(q["text"], q["filter"])
+#                 if result == "BLOCK":
+#                     print(f"    ⏳ Waiting 2s before retry...")
+#                     time.sleep(2)
+#                 else:
+#                     break 
+            
+#             if result and result != "BLOCK":
+#                 raw_data += f"\nQuery: {q['text']}\n{result}\n"
+#             else:
+#                 print("    ❌ This query failed/blocked.")
+#                 raw_data = "BLOCK" # Mark as blocked to trigger fallback
+
+#         # Check success
+#         if raw_data and raw_data != "BLOCK":
+#             ddg_success = True
+#             source_used = "DuckDuckGo"
+#             print("  ✅ DDG Success! Data Collected.")
+#         else:
+#             print("  ⚠️ DDG failed/blocked. Invoking Fallback.")
+
+#         # --- FALLBACK (Tavily) ---
+#         if not ddg_success:
+#             tavily_data = search_via_tavily(company)
+#             if tavily_data:
+#                 raw_data = tavily_data
+#                 source_used = "Tavily"
+#                 print("  ✅ Tavily Success!")
+#             else:
+#                 print("  ❌ Tavily Failed too.")
+
+#         # --- SAVE ---
+#         if raw_data and raw_data != "BLOCK":
+#             result_json = analyze_with_groq(company, raw_data)
+#             result_json["Source_Method"] = source_used
+#             final_data[company] = result_json
+#             save_json(final_data)
+#             print(f"  💾 Saved: {result_json}")
+#         else:
+#             final_data[company] = {
+#                 "Annual Revenue": "Not Found", 
+#                 "Total Employee Count": "Not Found", 
+#                 "Source_Method": "Failed"
+#             }
+#             save_json(final_data)
+        
+#         time.sleep(2)
+
+#     print("\n🎉 All companies processed successfully")
+
+
+# def enrich_companies_from_list(company_list):
+#     global TARGET_COMPANIES
+#     TARGET_COMPANIES = list(set(company_list))
+#     main()
+
+# # ==========================================
+# # 🟢 ENTRY POINT
+# # ==========================================
+
+# if __name__ == "__main__":
+#     main()
+
+
 
 
 import json
 import time
-import random
-import requests
 import os
 import datetime
-from bs4 import BeautifulSoup
 from groq import Groq
-from fake_useragent import UserAgent
-from duckduckgo_search import DDGS
 from dotenv import load_dotenv
-from itertools import cycle
-from API_rotation import get_groq_key,get_groq_count
-# Load environment variables
+from tavily import TavilyClient
+
+# API Rotation Imports
+from API_rotation import (
+    get_groq_key,
+    get_groq_count,
+    get_tavily_key,
+    get_tavily_count
+)
+
 load_dotenv()
 
 # ==========================================
@@ -596,7 +1990,6 @@ TARGET_COMPANIES = [
     "AnavClouds Software Solutions",
     "Fractal analytics",
     "Metacube",
-    "AnavClouds analytics.ai",
     "Cyntexa"
 ]
 
@@ -605,59 +1998,17 @@ RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
 
 os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
 
-# ------------------------------------------
-# ⏱ TIMING & DELAY SETTINGS
-# ------------------------------------------
-
-HTML_MAX_RETRIES = 3
-LIBRARY_MAX_RETRIES = 3
-SAFETY_MODE_LIMIT = 10
-
-# BLOCK_RETRY_DELAY = (150, 250)
-# QUERY_GAP_DELAY = (70, 90)
-# SAFETY_MODE_DELAY = (60, 120)
-# COMPANY_COOLDOWN_DELAY = (100, 150)
-BLOCK_RETRY_DELAY = (20, 40)
-QUERY_GAP_DELAY = (5, 8)
-SAFETY_MODE_DELAY = (15, 25)
-COMPANY_COOLDOWN_DELAY = (10, 20)
-# ------------------------------------------
-#  API KEY LOADER (UNCHANGED)
-# ------------------------------------------
-
-def get_api_keys(prefix):
-    keys = []
-    i = 1
-    while True:
-        key = os.environ.get(f"{prefix}_{i}")
-        if key:
-            keys.append(key)
-            i += 1
-        else:
-            break
-    return keys
-
-GROQ_KEYS = get_api_keys("GROQ_API_KEY")
-
-if not GROQ_KEYS:
-    raise RuntimeError("No GROQ API keys found in environment variables")
-
-#  GLOBAL ROUND-ROBIN ROTATOR
-GROQ_KEY_ROTATOR = cycle(GROQ_KEYS)
+# Timings
+COMPANY_COOLDOWN_DELAY = (2, 5)
 
 # ==========================================
-#  2. SAFE SAVE FUNCTIONS
+#  2. SAVE FUNCTIONS
 # ==========================================
 
-def save_raw_log(company, query, raw_text):
+def save_raw_log(company, source, raw_text):
     try:
         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
-            f.write(
-                f"\n{'='*50}\n"
-                f"Company: {company}\nQuery: {query}\n"
-                f"{'-'*20}\n{raw_text}\n"
-                f"{'='*50}\n"
-            )
+            f.write(f"\n{'='*50}\nCompany: {company}\nSource: {source}\n{'-'*20}\n{raw_text}\n{'='*50}\n")
     except Exception as e:
         print(f" Raw log save error: {e}")
 
@@ -669,111 +2020,94 @@ def save_json(data):
         print(f" JSON save error: {e}")
 
 # ==========================================
-#  3. SEARCH FUNCTIONS
+#  3. TAVILY SEARCH (PRIMARY & ONLY METHOD)
 # ==========================================
 
-def search_via_html(query, time_filter=None):
-    url = "https://html.duckduckgo.com/html/"
-    headers = {
-        "User-Agent": UserAgent().random,
-        "Referer": "https://www.google.com/"
-    }
-    payload = {"q": query}
-    if time_filter:
-        payload["df"] = time_filter
+def search_via_tavily(company):
+    """
+    Searches for company financial data using Tavily API.
+    """
+    current_year = datetime.datetime.now().year
+    prev_year = current_year - 1
+    
+    # Specific query for Revenue and Employees
+    query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+    
+    total_keys = get_tavily_count()
+    max_retries = max(1, total_keys)
+    
+    print(f"  ↳ 🦅 Searching via Tavily API...")
 
-    try:
-        print(f"📡 HTML Search: {query}")
-        response = requests.post(url, data=payload, headers=headers, timeout=15)
-
-        if response.status_code in [403, 429] or "captcha" in response.text.lower():
-            return "BLOCK"
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        results = soup.find_all("div", class_="result__body", limit=10)
-
-        if not results:
-            return None
-
-        text = ""
-        for r in results:
-            title = r.find("a", class_="result__a").get_text(strip=True)
-            snippet = r.find("a", class_="result__snippet").get_text(strip=True)
-            text += f"Source: {title}\nSnippet: {snippet}\n----------\n"
-
-        return text.strip()
-
-    except Exception:
-        return "BLOCK"
-
-def search_via_library(query, time_filter=None):
-    try:
-        timelimit = "y" if time_filter == "y" else None
-        print(f" Library Search: {query}")
-
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=10, timelimit=timelimit))
-            if not results:
+    for attempt in range(max_retries):
+        try:
+            tavily_key = get_tavily_key()
+            if not tavily_key:
+                print("    ❌ No Tavily keys available.")
                 return None
+                
+            client = TavilyClient(api_key=tavily_key)
+            
+            # Executing Search
+            response = client.search(
+                query=query, 
+                search_depth="advanced", 
+                max_results=2, 
+                include_answer=False
+            )
+            
+            context_text = ""
+            for result in response.get("results", []):
+                context_text += f"Title: {result['title']}\nContent: {result['content']}\n----------\n"
+            
+            return context_text
 
-            text = ""
-            for r in results:
-                text += f"Source: {r.get('title')}\nSnippet: {r.get('body')}\n----------\n"
-
-            return text.strip()
-
-    except Exception:
-        return "BLOCK"
+        except Exception as e:
+            print(f"    ⚠️ Tavily Key Failed (Attempt {attempt+1}): {e}")
+            time.sleep(1) # Short wait before rotating key
+            
+    return None
 
 # ==========================================
-#  4. GROQ ANALYSIS (KEY ROTATION HERE)
+#  4. GROQ ANALYSIS
 # ==========================================
 
 def analyze_with_groq(company, raw_data):
     """
-    Uses ONE Groq API key per call.
-    Automatically rotates keys using round-robin.
+    Uses Groq API to extract specific fields from the raw text.
     """
-    # 1. Get the total count of keys from the manager
-    total_keys = get_groq_count()
+    max_retries = max(1, get_groq_count())
     
-    # Safety: Ensure we try at least once even if count returns 0 (unlikely)
-    max_retries = max(1, total_keys)
     for _ in range(max_retries):
         try:
-            # api_key = next(GROQ_KEY_ROTATOR)
             api_key = get_groq_key()
             client = Groq(api_key=api_key)
-
+            
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
                     {
-                        "role": "system",
+                        "role": "system", 
                         "content": (
-                            "Extract 'Annual Revenue' and 'Total Employee Count'. "
-                            "Return JSON only: "
-                            "{'Annual Revenue': '...', 'Total Employee Count': '...'}"
+                            "Extract 'Annual Revenue' (with currency) and 'Total Employee Count'. "
+                            "Return strict JSON format only: "
+                            "{\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"} "
+                            "If information is not found, write 'Not Found'."
                         )
                     },
                     {
-                        "role": "user",
+                        "role": "user", 
                         "content": f"Company: {company}\nData:\n{raw_data}"
                     }
                 ],
                 response_format={"type": "json_object"}
             )
-
             return json.loads(completion.choices[0].message.content)
 
         except Exception as e:
-            print(f" Groq key failed, rotating key... {e}")
+            print(f"    ⚠️ Groq Error: {e}")
             time.sleep(0.5)
 
-    return {
-        "Annual Revenue": "Not Found",
-        "Total Employee Count": "Not Found"
-    }
+    return {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
 
 # ==========================================
 #  5. MAIN PIPELINE
@@ -781,96 +2115,70 @@ def analyze_with_groq(company, raw_data):
 
 def main():
     final_data = {}
-
+    
+    # Load existing data to avoid re-doing work
     if os.path.exists(FINAL_OUTPUT_FILE):
         try:
             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if content:
-                    final_data = json.loads(content)
-        except Exception:
+                final_data = json.loads(f.read().strip() or "{}")
+        except:
             final_data = {}
 
-    prev_year = datetime.datetime.now().year - 1
-    safety_mode_steps_remaining = 0
-
-    print(f"🚀 Starting extraction for {len(TARGET_COMPANIES)} companies")
+    print(f"🚀 Starting Extraction for {len(TARGET_COMPANIES)} companies (TAVILY ONLY MODE)")
 
     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+        # Skip if already done
         if company in final_data:
-            print(f" Skipping {company}")
-            continue
-
-        current_mode = "LIBRARY_MODE" if safety_mode_steps_remaining > 0 else "HTML_MODE"
-        safety_mode_steps_remaining = max(0, safety_mode_steps_remaining - 1)
+             print(f"\n[{idx}] Skipping {company} (Already Done)")
+             continue
 
         print(f"\n[{idx}] Processing: {company}")
-
-        queries = [
-            {"text": f"site:rocketreach.co {company} employee size", "filter": None},
-            {"text": f"{company} annual revenue {prev_year}", "filter": "y"}
-        ]
-
-        raw_data = ""
-
-        for q in queries:
-            result = None
-
-            if current_mode == "HTML_MODE":
-                for _ in range(HTML_MAX_RETRIES):
-                    result = search_via_html(q["text"], q["filter"])
-                    if result != "BLOCK":
-                        break
-                    time.sleep(random.uniform(*BLOCK_RETRY_DELAY))
-
-                if result == "BLOCK":
-                    safety_mode_steps_remaining = SAFETY_MODE_LIMIT
-                    current_mode = "LIBRARY_MODE"
-                    result = None
-
-            if current_mode == "LIBRARY_MODE":
-                for _ in range(LIBRARY_MAX_RETRIES):
-                    result = search_via_library(q["text"], q["filter"])
-                    if result != "BLOCK":
-                        break
-                    time.sleep(random.uniform(*BLOCK_RETRY_DELAY))
-
-            if result and result != "BLOCK":
-                raw_data += f"\nQuery: {q['text']}\n{result}\n"
-                save_raw_log(company, q["text"], result)
-
-            time.sleep(
-                random.uniform(*SAFETY_MODE_DELAY)
-                if current_mode == "LIBRARY_MODE"
-                else random.uniform(*QUERY_GAP_DELAY)
-            )
-
-        if raw_data.strip():
-            result = analyze_with_groq(company, raw_data)
-            final_data[company] = result
+        
+        # --- 1. SEARCH (TAVILY) ---
+        raw_data = search_via_tavily(company)
+        
+        # --- 2. ANALYZE & SAVE ---
+        if raw_data:
+            print("  ✅ Data collected via Tavily.")
+            
+            # Save Raw Logs
+            save_raw_log(company, "Tavily", raw_data)
+            
+            # Extract with Groq
+            result_json = analyze_with_groq(company, raw_data)
+            
+            # REMOVED: result_json["Source_Method"] = "Tavily"
+            
+            final_data[company] = result_json
             save_json(final_data)
-            print(f" Saved: {result}")
+            print(f"  💾 Saved: {result_json}")
+            
         else:
+            print("  ❌ No data found.")
             final_data[company] = {
-                "Annual Revenue": "Not Found",
+                "Annual Revenue": "Not Found", 
                 "Total Employee Count": "Not Found"
+                # REMOVED: "Source_Method": "Failed"
             }
             save_json(final_data)
-
-        time.sleep(random.uniform(*COMPANY_COOLDOWN_DELAY))
+        
+        # Politeness Delay
+        time.sleep(2)
 
     print("\n🎉 All companies processed successfully")
 
+# ==========================================
+#  6. EXTERNAL ENTRY POINT
+# ==========================================
 
 def enrich_companies_from_list(company_list):
     global TARGET_COMPANIES
     TARGET_COMPANIES = list(set(company_list))
     main()
+
 # ==========================================
 # 🟢 ENTRY POINT
 # ==========================================
 
 if __name__ == "__main__":
     main()
-
-
