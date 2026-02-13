@@ -1964,10 +1964,235 @@
 
 
 
+# import json
+# import time
+# import os
+# import datetime
+# from groq import Groq
+# from dotenv import load_dotenv
+# from tavily import TavilyClient
+
+# # API Rotation Imports
+# from API_rotation import (
+#     get_groq_key,
+#     get_groq_count,
+#     get_tavily_key,
+#     get_tavily_count
+# )
+
+# load_dotenv()
+
+# # ==========================================
+# #  1. CONFIGURATION
+# # ==========================================
+
+# TARGET_COMPANIES = [
+#     "AnavClouds Software Solutions",
+#     "Fractal analytics",
+#     "Metacube",
+#     "Cyntexa"
+# ]
+
+# FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
+# RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+
+# os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
+
+# # Timings
+# COMPANY_COOLDOWN_DELAY = (2, 5)
+
+# # ==========================================
+# #  2. SAVE FUNCTIONS
+# # ==========================================
+
+# def save_raw_log(company, source, raw_text):
+#     try:
+#         with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
+#             f.write(f"\n{'='*50}\nCompany: {company}\nSource: {source}\n{'-'*20}\n{raw_text}\n{'='*50}\n")
+#     except Exception as e:
+#         print(f" Raw log save error: {e}")
+
+# def save_json(data):
+#     try:
+#         with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+#             json.dump(data, f, indent=4, ensure_ascii=False)
+#     except Exception as e:
+#         print(f" JSON save error: {e}")
+
+# # ==========================================
+# #  3. TAVILY SEARCH (PRIMARY & ONLY METHOD)
+# # ==========================================
+
+# def search_via_tavily(company):
+#     """
+#     Searches for company financial data using Tavily API.
+#     """
+#     current_year = datetime.datetime.now().year
+#     prev_year = current_year - 1
+    
+#     # Specific query for Revenue and Employees
+#     query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+    
+#     total_keys = get_tavily_count()
+#     max_retries = max(1, total_keys)
+    
+#     print(f"  ↳ 🦅 Searching via Tavily API...")
+
+#     for attempt in range(max_retries):
+#         try:
+#             tavily_key = get_tavily_key()
+#             if not tavily_key:
+#                 print("    ❌ No Tavily keys available.")
+#                 return None
+                
+#             client = TavilyClient(api_key=tavily_key)
+            
+#             # Executing Search
+#             response = client.search(
+#                 query=query, 
+#                 search_depth="advanced", 
+#                 max_results=2, 
+#                 include_answer=False
+#             )
+            
+#             context_text = ""
+#             for result in response.get("results", []):
+#                 context_text += f"Title: {result['title']}\nContent: {result['content']}\n----------\n"
+            
+#             return context_text
+
+#         except Exception as e:
+#             print(f"    ⚠️ Tavily Key Failed (Attempt {attempt+1}): {e}")
+#             time.sleep(1) # Short wait before rotating key
+            
+#     return None
+
+# # ==========================================
+# #  4. GROQ ANALYSIS
+# # ==========================================
+
+# def analyze_with_groq(company, raw_data):
+#     """
+#     Uses Groq API to extract specific fields from the raw text.
+#     """
+#     max_retries = max(1, get_groq_count())
+    
+#     for _ in range(max_retries):
+#         try:
+#             api_key = get_groq_key()
+#             client = Groq(api_key=api_key)
+            
+#             completion = client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {
+#                         "role": "system", 
+#                         "content": (
+#                             "Extract 'Annual Revenue' (with currency) and 'Total Employee Count'. "
+#                             "Return strict JSON format only: "
+#                             "{\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"} "
+#                             "If information is not found, write 'Not Found'."
+#                         )
+#                     },
+#                     {
+#                         "role": "user", 
+#                         "content": f"Company: {company}\nData:\n{raw_data}"
+#                     }
+#                 ],
+#                 response_format={"type": "json_object"}
+#             )
+#             return json.loads(completion.choices[0].message.content)
+
+#         except Exception as e:
+#             print(f"    ⚠️ Groq Error: {e}")
+#             time.sleep(0.5)
+
+#     return {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
+
+# # ==========================================
+# #  5. MAIN PIPELINE
+# # ==========================================
+
+# def main():
+#     final_data = {}
+    
+#     # Load existing data to avoid re-doing work
+#     if os.path.exists(FINAL_OUTPUT_FILE):
+#         try:
+#             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+#                 final_data = json.loads(f.read().strip() or "{}")
+#         except:
+#             final_data = {}
+
+#     print(f"🚀 Starting Extraction for {len(TARGET_COMPANIES)} companies (TAVILY ONLY MODE)")
+
+#     for idx, company in enumerate(TARGET_COMPANIES, start=1):
+#         # Skip if already done
+#         if company in final_data:
+#              print(f"\n[{idx}] Skipping {company} (Already Done)")
+#              continue
+
+#         print(f"\n[{idx}] Processing: {company}")
+        
+#         # --- 1. SEARCH (TAVILY) ---
+#         raw_data = search_via_tavily(company)
+        
+#         # --- 2. ANALYZE & SAVE ---
+#         if raw_data:
+#             print("  ✅ Data collected via Tavily.")
+            
+#             # Save Raw Logs
+#             save_raw_log(company, "Tavily", raw_data)
+            
+#             # Extract with Groq
+#             result_json = analyze_with_groq(company, raw_data)
+            
+#             # REMOVED: result_json["Source_Method"] = "Tavily"
+            
+#             final_data[company] = result_json
+#             save_json(final_data)
+#             print(f"  💾 Saved: {result_json}")
+            
+#         else:
+#             print("  ❌ No data found.")
+#             final_data[company] = {
+#                 "Annual Revenue": "Not Found", 
+#                 "Total Employee Count": "Not Found"
+#                 # REMOVED: "Source_Method": "Failed"
+#             }
+#             save_json(final_data)
+        
+#         # Politeness Delay
+#         time.sleep(2)
+
+#     print("\n🎉 All companies processed successfully")
+
+# # ==========================================
+# #  6. EXTERNAL ENTRY POINT
+# # ==========================================
+
+# def enrich_companies_from_list(company_list):
+#     global TARGET_COMPANIES
+#     TARGET_COMPANIES = list(set(company_list))
+#     main()
+
+# # ==========================================
+# # 🟢 ENTRY POINT
+# # ==========================================
+
+# if __name__ == "__main__":
+
+#     main()
+
+
+
+
 import json
 import time
 import os
+import re
 import datetime
+import asyncio  # <--- CHANGED: Imported asyncio for parallel processing
 from groq import Groq
 from dotenv import load_dotenv
 from tavily import TavilyClient
@@ -1989,99 +2214,144 @@ load_dotenv()
 TARGET_COMPANIES = [
     "AnavClouds Software Solutions",
     "Fractal analytics",
-    "Metacube",
-    "Cyntexa"
+    "Metacube"
 ]
 
 FINAL_OUTPUT_FILE = "company_intel/Final_Company_Data_by_simple_approach.json"
-RAW_DEBUG_FILE = "raw_search_logs_by_simple_approach.txt"
+RAW_DEBUG_FILE = "raw_search_logs_async.json"
 
 os.makedirs(os.path.dirname(FINAL_OUTPUT_FILE), exist_ok=True)
 
-# Timings
-COMPANY_COOLDOWN_DELAY = (2, 5)
+# <--- CHANGED: Concurrency Limit
+# We set this to 5 because you have 5 Groq keys. 
+# This ensures 1 request per key at any given time, preventing Rate Limits.
+CONCURRENCY_LIMIT = 5 
 
 # ==========================================
-#  2. SAVE FUNCTIONS
+#  2. HELPER FUNCTIONS
 # ==========================================
 
-def save_raw_log(company, source, raw_text):
+def clean_text(text):
+    if not text: return ""
+    text = text.replace("\n", " ").replace("\t", " ").replace("\\", "")
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def save_raw_log(company, source, raw_text, direct_answer=None):
+    """
+    Saves raw logs. Using append mode is generally safe for simple async tasks.
+    """
+    new_entry = {
+        "company": company,
+        "source": source,
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "tavily_direct_answer": direct_answer, 
+        "raw_search_context": raw_text
+    }
+    
+    # Read-Modify-Write pattern
+    data_list = []
+    if os.path.exists(RAW_DEBUG_FILE):
+        try:
+            with open(RAW_DEBUG_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content: data_list = json.loads(content)
+        except: data_list = []
+    
+    data_list.append(new_entry)
+    
     try:
-        with open(RAW_DEBUG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*50}\nCompany: {company}\nSource: {source}\n{'-'*20}\n{raw_text}\n{'='*50}\n")
+        with open(RAW_DEBUG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data_list, f, indent=4, ensure_ascii=False)
     except Exception as e:
         print(f" Raw log save error: {e}")
 
-def save_json(data):
-    try:
-        with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        print(f" JSON save error: {e}")
-
-# ==========================================
-#  3. TAVILY SEARCH (PRIMARY & ONLY METHOD)
-# ==========================================
-
-def search_via_tavily(company):
+# <--- CHANGED: Safe JSON Saving
+def save_json_entry(company, data):
     """
-    Searches for company financial data using Tavily API.
+    Since multiple companies finish at the same time, we need a 'Retry' mechanism.
+    If the file is busy being written by another process, wait 0.1s and try again.
+    """
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            full_data = {}
+            # 1. Read existing data
+            if os.path.exists(FINAL_OUTPUT_FILE):
+                with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content: full_data = json.loads(content)
+            
+            # 2. Update specific company
+            full_data[company] = data
+            
+            # 3. Write back
+            with open(FINAL_OUTPUT_FILE, "w", encoding="utf-8") as f:
+                json.dump(full_data, f, indent=4, ensure_ascii=False)
+            break # Success, exit loop
+        except Exception:
+            time.sleep(0.1) # Wait briefly and retry
+
+# ==========================================
+#  3. ASYNC SEARCH WRAPPERS
+# ==========================================
+
+# <--- CHANGED: Sync Function for Threading
+def _tavily_sync_call(company):
+    """
+    This is the standard blocking Tavily code.
+    We isolate it here so we can run it in a separate thread.
     """
     current_year = datetime.datetime.now().year
     prev_year = current_year - 1
     
-    # Specific query for Revenue and Employees
-    query = f"{company} total annual revenue {prev_year} and total employee count {current_year} financial report"
+    query = (
+        f"Detailed financial report for {company}. "
+        f"Find 'Total Annual Revenue' (in {prev_year} or latest available) "
+        f"and 'Total Employee Count' (in {current_year} or latest available). "
+        "Just the numbers."
+    )
     
     total_keys = get_tavily_count()
     max_retries = max(1, total_keys)
-    
-    print(f"  ↳ 🦅 Searching via Tavily API...")
 
     for attempt in range(max_retries):
         try:
             tavily_key = get_tavily_key()
-            if not tavily_key:
-                print("    ❌ No Tavily keys available.")
-                return None
-                
+            if not tavily_key: return None, None
             client = TavilyClient(api_key=tavily_key)
-            
-            # Executing Search
             response = client.search(
                 query=query, 
                 search_depth="advanced", 
                 max_results=2, 
-                include_answer=False
+                include_answer=True 
             )
-            
+            direct_answer = response.get("answer", None)
             context_text = ""
             for result in response.get("results", []):
-                context_text += f"Title: {result['title']}\nContent: {result['content']}\n----------\n"
-            
-            return context_text
-
+                cleaned = clean_text(result['content'])
+                context_text += f"Source: {result['title']} | Data: {cleaned[:500]} ... \n"
+            return context_text, direct_answer
         except Exception as e:
-            print(f"    ⚠️ Tavily Key Failed (Attempt {attempt+1}): {e}")
-            time.sleep(1) # Short wait before rotating key
-            
-    return None
+            print(f"    ⚠️ Tavily Error ({company}): {e}")
+            time.sleep(1)
+    return None, None
 
-# ==========================================
-#  4. GROQ ANALYSIS
-# ==========================================
+# <--- CHANGED: Async Wrapper
+async def search_via_tavily_async(company):
+    # This runs the blocking code in a separate thread so the main loop doesn't freeze
+    return await asyncio.to_thread(_tavily_sync_call, company)
 
-def analyze_with_groq(company, raw_data):
+# <--- CHANGED: Sync Function for Threading
+def _groq_sync_call(company, final_context):
     """
-    Uses Groq API to extract specific fields from the raw text.
+    Standard blocking Groq code.
     """
     max_retries = max(1, get_groq_count())
-    
     for _ in range(max_retries):
         try:
             api_key = get_groq_key()
             client = Groq(api_key=api_key)
-            
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -2089,96 +2359,130 @@ def analyze_with_groq(company, raw_data):
                         "role": "system", 
                         "content": (
                             "Extract 'Annual Revenue' (with currency) and 'Total Employee Count'. "
-                            "Return strict JSON format only: "
-                            "{\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"} "
-                            "If information is not found, write 'Not Found'."
+                            "If the input is an AI Summary, trust it. "
+                            "If the input is Search Results, find the LATEST available data. "
+                            "Return strict JSON: {\"Annual Revenue\": \"...\", \"Total Employee Count\": \"...\"} "
+                            "If not found, write 'Not Found'."
                         )
                     },
-                    {
-                        "role": "user", 
-                        "content": f"Company: {company}\nData:\n{raw_data}"
-                    }
+                    {"role": "user", "content": f"Company: {company}\nData:\n{final_context}"}
                 ],
                 response_format={"type": "json_object"}
             )
             return json.loads(completion.choices[0].message.content)
-
         except Exception as e:
-            print(f"    ⚠️ Groq Error: {e}")
+            print(f"    ⚠️ Groq Error ({company}): {e}")
             time.sleep(0.5)
-
     return {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
+
+# <--- CHANGED: Async Wrapper
+async def analyze_with_groq_async(company, final_context):
+    return await asyncio.to_thread(_groq_sync_call, company, final_context)
+
+# ==========================================
+#  4. WORKER FUNCTION (THE ENGINE)
+# ==========================================
+
+async def process_single_company(sem, company):
+    """
+    This function processes ONE company.
+    The 'sem' (Semaphore) ensures only 5 of these run at the exact same time.
+    """
+    async with sem:  # <--- CHANGED: Acquiring the Lock (Limit 5)
+        print(f"  ▶️ Starting: {company}")
+        
+        # 1. Search Tavily (Async)
+        raw_data, direct_answer = await search_via_tavily_async(company)
+        
+        if raw_data:
+            safe_answer = direct_answer if direct_answer else ""
+            bad_keywords = ["unknown", "not available", "not found", "no information","not provided", "n/a", "unspecified"]
+            
+            # --- Smart Logic (Same as before) ---
+            if not safe_answer:
+                # <--- CHANGED: Increased raw data limit to 3000 chars as requested
+                final_context = f"SEARCH RESULTS:\n{raw_data[:1000]}"
+                log_msg = "No Direct Answer. Using Raw Data."
+            elif any(k in safe_answer.lower() for k in bad_keywords):
+                final_context = f"AI SUMMARY: {safe_answer}\n\nSEARCH RESULTS:\n{raw_data[:3000]}"
+                log_msg = "Vague Answer. Using Answer + Raw Data."
+            else:
+                final_context = f"AI SUMMARY: {safe_answer}"
+                log_msg = "Good Answer. Using Answer Only."
+
+            print(f"    ℹ️ {company}: {log_msg}")
+
+            # 2. Analyze with Groq (Async)
+            result_json = await analyze_with_groq_async(company, final_context)
+            
+            # 3. Save Data (Thread Safe)
+            save_raw_log(company, "Tavily", raw_data, safe_answer)
+            save_json_entry(company, result_json)
+            
+            print(f"  ✅ Finished: {company} -> {result_json}")
+        else:
+            print(f"  ❌ Failed: {company}")
+            fallback = {"Annual Revenue": "Not Found", "Total Employee Count": "Not Found"}
+            save_json_entry(company, fallback)
 
 # ==========================================
 #  5. MAIN PIPELINE
 # ==========================================
 
-def main():
-    final_data = {}
-    
-    # Load existing data to avoid re-doing work
+async def main_async():
+    # Cleanup old logs
+    if os.path.exists(RAW_DEBUG_FILE):
+        try: os.remove(RAW_DEBUG_FILE)
+        except: pass
+
+    # Load existing to skip
+    existing_data = {}
     if os.path.exists(FINAL_OUTPUT_FILE):
         try:
             with open(FINAL_OUTPUT_FILE, "r", encoding="utf-8") as f:
-                final_data = json.loads(f.read().strip() or "{}")
-        except:
-            final_data = {}
+                existing_data = json.loads(f.read().strip() or "{}")
+        except: pass
 
-    print(f"🚀 Starting Extraction for {len(TARGET_COMPANIES)} companies (TAVILY ONLY MODE)")
+    # Filter targets
+    companies_to_process = [c for c in TARGET_COMPANIES if c not in existing_data]
 
-    for idx, company in enumerate(TARGET_COMPANIES, start=1):
-        # Skip if already done
-        if company in final_data:
-             print(f"\n[{idx}] Skipping {company} (Already Done)")
-             continue
+    print(f"🚀 Starting ASYNC Extraction for {len(companies_to_process)} companies.")
+    print(f"⚡ Mode: Async Parallel | Concurrency Limit: {CONCURRENCY_LIMIT}")
 
-        print(f"\n[{idx}] Processing: {company}")
-        
-        # --- 1. SEARCH (TAVILY) ---
-        raw_data = search_via_tavily(company)
-        
-        # --- 2. ANALYZE & SAVE ---
-        if raw_data:
-            print("  ✅ Data collected via Tavily.")
-            
-            # Save Raw Logs
-            save_raw_log(company, "Tavily", raw_data)
-            
-            # Extract with Groq
-            result_json = analyze_with_groq(company, raw_data)
-            
-            # REMOVED: result_json["Source_Method"] = "Tavily"
-            
-            final_data[company] = result_json
-            save_json(final_data)
-            print(f"  💾 Saved: {result_json}")
-            
-        else:
-            print("  ❌ No data found.")
-            final_data[company] = {
-                "Annual Revenue": "Not Found", 
-                "Total Employee Count": "Not Found"
-                # REMOVED: "Source_Method": "Failed"
-            }
-            save_json(final_data)
-        
-        # Politeness Delay
-        time.sleep(2)
+    # <--- CHANGED: Create the Semaphore (The Traffic Cop)
+    sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+    # Create a list of tasks (jobs) to run
+    tasks = []
+    for company in companies_to_process:
+        task = asyncio.create_task(process_single_company(sem, company))
+        tasks.append(task)
+    
+    # Run all tasks and wait for them to finish
+    await asyncio.gather(*tasks)
 
     print("\n🎉 All companies processed successfully")
 
 # ==========================================
-#  6. EXTERNAL ENTRY POINT
+#  6. EXTERNAL ENTRY POINT (The Bridge)
 # ==========================================
 
 def enrich_companies_from_list(company_list):
+    
+    
     global TARGET_COMPANIES
+    
     TARGET_COMPANIES = list(set(company_list))
-    main()
+    
+    print(f"🔗 Bridge Activated: Starting Async Engine for {len(TARGET_COMPANIES)} companies...")
+    
+  
+    asyncio.run(main_async())
 
 # ==========================================
 # 🟢 ENTRY POINT
 # ==========================================
 
 if __name__ == "__main__":
-    main()
+    # <--- CHANGED: Run the async loop
+    asyncio.run(main_async())
