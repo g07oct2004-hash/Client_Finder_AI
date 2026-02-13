@@ -1451,11 +1451,11 @@ if st.session_state.df is not None:
         top_locations.columns = ["Location", "Job Count"]
         st.plotly_chart(px.bar(top_locations, x="Location", y="Job Count", title="📍 Top Locations"), use_container_width=True)
 
-    # --- MAP ---
-    st.markdown("### 🗺️ Global Job Distribution Map")
-    country_counts = df.groupby("Country").size().reset_index(name="Job Count")
-    country_counts = country_counts[~country_counts["Country"].isin(["Unknown", "Remote"])]
-    st.plotly_chart(px.scatter_geo(country_counts, locations="Country", locationmode="country names", size="Job Count", projection="natural earth"), use_container_width=True)
+    # # --- MAP ---
+    # st.markdown("### 🗺️ Global Job Distribution Map")
+    # country_counts = df.groupby("Country").size().reset_index(name="Job Count")
+    # country_counts = country_counts[~country_counts["Country"].isin(["Unknown", "Remote"])]
+    # st.plotly_chart(px.scatter_geo(country_counts, locations="Country", locationmode="country names", size="Job Count", projection="natural earth"), use_container_width=True)
 
     # --- DETAILED TABLE ---
     st.markdown("### 📋 Detailed Lead Inventory")
@@ -2998,4 +2998,5 @@ if st.session_state.df is not None:
         # # --- ORIGINAL REPORT DOWNLOAD BUTTON (Outside the loop) ---
         # if st.session_state.df is not None:
         #     csv = st.session_state.df.to_csv(index=False).encode("utf-8")
+
         #     st.download_button(label=" Download Full Report (CSV)", data=csv, file_name=f"Report.csv", mime="text/csv")
