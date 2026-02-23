@@ -2059,6 +2059,88 @@ def get_leads_jsearch(q, loc, date_f, type_f, limit):
 #                 logger.error(f"Adzuna error: {e}")
 #                 break
 #     return all_jobs
+# def get_leads_adzuna(q, loc, date_f, type_f, limit):
+#     country_code, target_city, country_name = parse_adzuna_location(loc)
+#     all_jobs, seen = [], set()
+#     page, date_map = 1, {"All": None, "today": 1, "3days": 3, "week": 7, "month": 30}
+#     max_days = date_map.get(date_f)
+
+#     # Multi-Stage Search: Exact City first, then broader Country
+#     search_locations = [target_city, ""]
+   
+#     print(f"\n🔎 Scanning Adzuna for: {q} in {loc}...")
+
+#     for search_loc in search_locations:
+#         if len(all_jobs) >= limit: break
+#         page = 1
+        
+#         # Loop strictly until we hit the LIMIT of CLEAN jobs
+#         while len(all_jobs) < limit and page <= 5: # Increased page limit slightly
+#             url = f"https://api.adzuna.com/v1/api/jobs/{country_code}/search/{page}"
+#             params = {
+#                 "app_id": ADZUNA_APP_ID,
+#                 "app_key": ADZUNA_APP_KEY,
+#                 "results_per_page": 50,
+#                 "what": q,
+#                 "where": search_loc,
+#                 "max_days_old": max_days
+#             }
+#             try:
+#                 res = requests.get(url, params=params, timeout=10)
+#                 jobs = res.json().get("results", [])
+#                 if not jobs: break
+               
+#                 for j in jobs:
+#                     # 1. Get Company Name
+#                     company_raw = j.get("company", {}).get("display_name", "Unknown").strip()
+#                     company_lower = company_raw.lower()
+                    
+#                     # --- 🛑 EXCLUSION LOGIC START ---
+#                     # Check if the company name contains any word from the exclude list
+#                     is_excluded = False
+#                     for excluded in EXCLUDE_COMPANIES:
+#                         if excluded in company_lower:
+#                             print(f"   🚫 Blocked Large Company: {company_raw}") # TERMINAL ME DIKHEGA
+#                             is_excluded = True
+#                             break
+                    
+#                     if is_excluded:
+#                         continue  # Skip this loop iteration
+#                     # --- 🛑 EXCLUSION LOGIC END ---
+
+#                     # 2. Quality Filter (Title Match)
+#                     title = j.get("title", "").lower()
+#                     if q.lower() not in title: continue 
+                        
+#                     job_loc = j.get("location", {}).get("display_name", search_loc or country_name)
+#                     key = f"{j.get('title')}-{company_raw}-{job_loc}"
+                   
+#                     if key in seen: continue
+#                     seen.add(key)
+                   
+#                     all_jobs.append({
+#                         "Job Title": j.get("title"),
+#                         "Company": company_raw,
+#                         "Location": job_loc,
+#                         "Country": country_name,
+#                         "Type": type_f if type_f != "All" else "Not Specified",
+#                         "Market Source": "Adzuna",
+#                         "Posted": j.get("created")[:10],
+#                         "Apply Link": j.get("redirect_url"),
+#                         "Job Description": j.get("description", "N/A"),
+#                         "Company URL": "N/A"
+#                     })
+                    
+#                     # Stop exactly when we have enough CLEAN leads
+#                     if len(all_jobs) >= limit: break
+                
+#                 page += 1
+#             except Exception as e:
+#                 logger.error(f"Adzuna error: {e}")
+#                 break
+    
+#     print(f"✅ Adzuna Search Complete. Found {len(all_jobs)} clean leads.")
+#     return all_jobs
 def get_leads_adzuna(q, loc, date_f, type_f, limit):
     country_code, target_city, country_name = parse_adzuna_location(loc)
     all_jobs, seen = [], set()
@@ -2067,15 +2149,18 @@ def get_leads_adzuna(q, loc, date_f, type_f, limit):
 
     # Multi-Stage Search: Exact City first, then broader Country
     search_locations = [target_city, ""]
-   
+    
     print(f"\n🔎 Scanning Adzuna for: {q} in {loc}...")
 
+    # STEP 1: Fetch Raw Data (Bilkul SerpAPI ki tarah loop ke bahar filter karenge)
+    # Filter hone par count kam na ho, isliye limit se thoda zyada fetch kar rahe hain
+    raw_fetch_limit = limit * 2 
+
     for search_loc in search_locations:
-        if len(all_jobs) >= limit: break
+        if len(all_jobs) >= raw_fetch_limit: break
         page = 1
         
-        # Loop strictly until we hit the LIMIT of CLEAN jobs
-        while len(all_jobs) < limit and page <= 5: # Increased page limit slightly
+        while len(all_jobs) < raw_fetch_limit and page <= 10: 
             url = f"https://api.adzuna.com/v1/api/jobs/{country_code}/search/{page}"
             params = {
                 "app_id": ADZUNA_APP_ID,
@@ -2089,26 +2174,11 @@ def get_leads_adzuna(q, loc, date_f, type_f, limit):
                 res = requests.get(url, params=params, timeout=10)
                 jobs = res.json().get("results", [])
                 if not jobs: break
-               
+                
                 for j in jobs:
-                    # 1. Get Company Name
                     company_raw = j.get("company", {}).get("display_name", "Unknown").strip()
-                    company_lower = company_raw.lower()
                     
-                    # --- 🛑 EXCLUSION LOGIC START ---
-                    # Check if the company name contains any word from the exclude list
-                    is_excluded = False
-                    for excluded in EXCLUDE_COMPANIES:
-                        if excluded in company_lower:
-                            print(f"   🚫 Blocked Large Company: {company_raw}") # TERMINAL ME DIKHEGA
-                            is_excluded = True
-                            break
-                    
-                    if is_excluded:
-                        continue  # Skip this loop iteration
-                    # --- 🛑 EXCLUSION LOGIC END ---
-
-                    # 2. Quality Filter (Title Match)
+                    # 2. Quality Filter (Title Match) - Pehle quality check karenge
                     title = j.get("title", "").lower()
                     if q.lower() not in title: continue 
                         
@@ -2118,6 +2188,7 @@ def get_leads_adzuna(q, loc, date_f, type_f, limit):
                     if key in seen: continue
                     seen.add(key)
                    
+                    # Yahan hum saara data collect kar rahe hain bina filter kiye
                     all_jobs.append({
                         "Job Title": j.get("title"),
                         "Company": company_raw,
@@ -2131,16 +2202,43 @@ def get_leads_adzuna(q, loc, date_f, type_f, limit):
                         "Company URL": "N/A"
                     })
                     
-                    # Stop exactly when we have enough CLEAN leads
-                    if len(all_jobs) >= limit: break
+                    if len(all_jobs) >= raw_fetch_limit: break
                 
                 page += 1
             except Exception as e:
                 logger.error(f"Adzuna error: {e}")
                 break
+
+    # STEP 2: 🔥 EXCLUDE LOGIC AT THE END (Bilkul SerpAPI Style)
+    final_clean_jobs = []
+    excluded_company_names = []  
+
+    for job in all_jobs:
+        company_raw = str(job.get("Company", ""))
+        company_lower = company_raw.lower()
+        
+        is_excluded = False
+        for ex in EXCLUDE_COMPANIES:
+            # Word boundary regex (\b) taaki 'Agency' ya 'College' block na ho
+            pattern = rf"\b{re.escape(ex.lower())}\b"
+            if re.search(pattern, company_lower):
+                is_excluded = True
+                excluded_company_names.append(company_raw) 
+                break
+                
+        if not is_excluded:
+            final_clean_jobs.append(job)
+
+    # Reporting exactly like your SerpAPI function
+    unique_excluded = set(excluded_company_names)
+    print(f"\n🚫 Excluded Companies Count: {len(excluded_company_names)}")
+    if unique_excluded:
+        print(f"📋 Names of Excluded Companies: {', '.join(unique_excluded)}")
+        
+    print(f"✅ Adzuna Search Complete. Found {len(final_clean_jobs)} clean leads.")
     
-    print(f"✅ Adzuna Search Complete. Found {len(all_jobs)} clean leads.")
-    return all_jobs
+    # Return exactly what the user requested (up to limit)
+    return final_clean_jobs[:limit]
 import re
 
 # def normalize_revenue(rev):
