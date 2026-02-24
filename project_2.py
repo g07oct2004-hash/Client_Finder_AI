@@ -5645,16 +5645,47 @@ if st.session_state.df is not None:
                     except Exception as e:
                         st.error(f"❌ An error occurred: {str(e)}")
 
-            # --- PERSISTENT DOWNLOAD BUTTON FOR STEP 4 ---
+            # # --- PERSISTENT DOWNLOAD BUTTON FOR STEP 4 ---
+            if "mapped_data" in st.session_state:
+                st.markdown("### 🔥 Final Instantly-Ready File")
+            #     final_df = st.session_state.mapped_data
+                
+            #     # Previewing specific columns
+            #     p_cols = [c for c in ["First Name", "Company Name", "Generated_Email_Subject"] if c in final_df.columns]
+            #     st.dataframe(final_df[p_cols if p_cols else final_df.columns].head(), use_container_width=True)
+                
+            #     csv_data = final_df.to_csv(index=False).encode("utf-8")
+            #     st.download_button(
+            #         label="📥 Download Final Instantly CSV",
+            #         data=csv_data,
+            #         file_name="Instantly_Ready_Leads.csv",
+            #         mime="text/csv",
+            #         key="final_instantly_download_btn"
+            #     )
+
             if "mapped_data" in st.session_state:
                 st.markdown("### 🔥 Final Instantly-Ready File")
                 final_df = st.session_state.mapped_data
                 
-                # Previewing specific columns
-                p_cols = [c for c in ["First Name", "Company Name", "Generated_Email_Subject"] if c in final_df.columns]
-                st.dataframe(final_df[p_cols if p_cols else final_df.columns].head(), use_container_width=True)
+                # Select only the specific columns you need
+                selected_columns = [
+                    "Generated_Email_Subject", 
+                    "Generated_Email_Body", 
+                    "First Name", 
+                    "Last Name", 
+                    "Company Name", 
+                    "Email"
+                ]
                 
-                csv_data = final_df.to_csv(index=False).encode("utf-8")
+                # Check which of the selected columns actually exist in the dataframe
+                available_cols = [col for col in selected_columns if col in final_df.columns]
+                
+                # Preview the filtered data in the UI
+                st.dataframe(final_df[available_cols].head(), use_container_width=True)
+                
+                # Create the CSV data for download using ONLY the filtered columns
+                csv_data = final_df[available_cols].to_csv(index=False).encode("utf-8")
+                
                 st.download_button(
                     label="📥 Download Final Instantly CSV",
                     data=csv_data,
