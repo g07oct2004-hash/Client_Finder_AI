@@ -2095,19 +2095,32 @@ def get_leads_jsearch(q, loc, date_f, type_f, limit):
 #                     company_raw = j.get("company", {}).get("display_name", "Unknown").strip()
 #                     company_lower = company_raw.lower()
                     
+#                     # # --- 🛑 EXCLUSION LOGIC START ---
+#                     # # Check if the company name contains any word from the exclude list
+#                     # is_excluded = False
+#                     # for excluded in EXCLUDE_COMPANIES:
+#                     #     if excluded in company_lower:
+#                     #         print(f"   🚫 Blocked Large Company: {company_raw}") # TERMINAL ME DIKHEGA
+#                     #         is_excluded = True
+#                     #         break
+                    
+#                     # if is_excluded:
+#                     #     continue  # Skip this loop iteration
+#                     # # --- 🛑 EXCLUSION LOGIC END ---
+                    
 #                     # --- 🛑 EXCLUSION LOGIC START ---
-#                     # Check if the company name contains any word from the exclude list
+#                     # Only block if the excluded string matches as a whole word (\b)
 #                     is_excluded = False
 #                     for excluded in EXCLUDE_COMPANIES:
-#                         if excluded in company_lower:
-#                             print(f"   🚫 Blocked Large Company: {company_raw}") # TERMINAL ME DIKHEGA
+#                         pattern = rf"\b{re.escape(excluded.lower())}\b"
+#                         if re.search(pattern, company_lower):
+#                             print(f"    🚫 Blocked Large Company: {company_raw}")
 #                             is_excluded = True
 #                             break
                     
 #                     if is_excluded:
-#                         continue  # Skip this loop iteration
+#                         continue 
 #                     # --- 🛑 EXCLUSION LOGIC END ---
-
 #                     # 2. Quality Filter (Title Match)
 #                     title = j.get("title", "").lower()
 #                     if q.lower() not in title: continue 
@@ -3457,25 +3470,53 @@ def update_sheet_with_enriched_data(uploaded_df):
 with st.sidebar:
     st.title("⚙️ Search Logic")
    
-    # 1. Job Source Provider
+    # # 1. Job Source Provider
+    # provider = st.radio(
+    #     "Job Source",
+    #     ["SerpAPI (Google Jobs)", "LinkedIn (RapidAPI)", "JSearch (Enhanced Google Jobs)", "Adzuna (High Limit)"],
+    #     index=0
+    # )
     provider = st.radio(
-        "Job Source",
-        ["SerpAPI (Google Jobs)", "LinkedIn (RapidAPI)", "JSearch (Enhanced Google Jobs)", "Adzuna (High Limit)"],
-        index=0
-    )
+    "Job Source",
+    [
+        "SerpAPI (Google Jobs)",
+        "LinkedIn (RapidAPI)",
+        "JSearch (Enhanced Google Jobs)",
+        "Adzuna (High Limit)",
+        "Adzuna + SerpAPI (300 Max)"  # ✅ NEW OPTION
+    ],
+    index=0
+)
  
     # 2. Logic to handle "One-time" value jump for Adzuna
     if "last_provider" not in st.session_state:
         st.session_state.last_provider = provider
  
     # Automatic trigger when switching to Adzuna
-    if provider.startswith("Adzuna") and st.session_state.last_provider != provider:
-        st.session_state.target_count = 200 # Set exactly 200 for Adzuna
-        st.session_state.last_provider = provider
-    # Reset to standard 50 when switching back
+    # if provider.startswith("Adzuna") and st.session_state.last_provider != provider:
+    if provider.startswith("Adzuna + SerpAPI") and st.session_state.last_provider != provider:
+
+        st.session_state.target_count = 300
+    
+    elif provider.startswith("Adzuna") and st.session_state.last_provider != provider:
+
+        st.session_state.target_count = 200
+    
     elif not provider.startswith("Adzuna") and st.session_state.last_provider != provider:
+
         st.session_state.target_count = 50
+    
         st.session_state.last_provider = provider
+
+ 
+
+
+    #     # st.session_state.target_count = 200 # Set exactly 200 for Adzuna
+    #     st.session_state.last_provider = provider
+    # # Reset to standard 50 when switching back
+    # elif not provider.startswith("Adzuna") and st.session_state.last_provider != provider:
+    #     st.session_state.target_count = 50
+    #     st.session_state.last_provider = provider
  
     # 3. Dynamic Selection Boxes
     date_val = st.selectbox("📅 Timeline (Freshness)", ["All", "today", "3days", "week", "month"])
@@ -3483,7 +3524,13 @@ with st.sidebar:
  
     # 4. Smart Slider Logic
     # We set the max to 200 for Adzuna as requested
-    max_limit = 200 if provider.startswith("Adzuna") else 100
+    # max_limit = 200 if provider.startswith("Adzuna") else 100
+    if provider.startswith("Adzuna + SerpAPI"):
+        max_limit = 300
+    elif provider.startswith("Adzuna"):
+        max_limit = 200
+    else:
+        max_limit = 100
    
     target = st.slider(
         "🎯 Target Leads Count",
@@ -3497,10 +3544,17 @@ with st.sidebar:
     st.session_state.target_count = target
  
     st.divider()
-    if provider.startswith("Adzuna"):
+    # if provider.startswith("Adzuna"):
+    #     st.caption("🚀 Adzuna Mode: Optimized for 200 leads")
+    if provider.startswith("Adzuna + SerpAPI"):
+        st.caption("🔥 Hybrid Mode: Adzuna + SerpAPI | Max 300 Leads")
+    
+    elif provider.startswith("Adzuna"):
         st.caption("🚀 Adzuna Mode: Optimized for 200 leads")
+    
     else:
         st.caption("✅ Standard Filters Active")
+   
  
 # ================= MAIN UI =================
 st.title("🚀 Market Intelligence Dashboard")
@@ -3605,12 +3659,34 @@ if st.button("Generate Final Report"):
         st.error("Please fill in both Job Role and Location.")
     else:
         with st.spinner(f"Fetching up to {target} jobs via {provider}..."):
+            # if provider.startswith("SerpAPI"):
+            #     results = get_leads_serpapi(job_q, loc_q, date_val, type_val, target)
+            # elif provider.startswith("LinkedIn"):
+            #     results = get_leads_linkedin(job_q, loc_q, date_val, type_val, target)
+            # elif provider.startswith("Adzuna"): 
+            #     results = get_leads_adzuna(job_q, loc_q, date_val, type_val, target)
+            # else:
+            #     results = get_leads_jsearch(job_q, loc_q, date_val, type_val, target)
             if provider.startswith("SerpAPI"):
                 results = get_leads_serpapi(job_q, loc_q, date_val, type_val, target)
+            
             elif provider.startswith("LinkedIn"):
                 results = get_leads_linkedin(job_q, loc_q, date_val, type_val, target)
-            elif provider.startswith("Adzuna"): 
+            
+            elif provider.startswith("Adzuna + SerpAPI"):
+                # Split target between both sources
+                serp_limit = target // 2
+                adzuna_limit = target - serp_limit
+            
+                results_serp = get_leads_serpapi(job_q, loc_q, date_val, type_val, serp_limit)
+                results_adzuna = get_leads_adzuna(job_q, loc_q, date_val, type_val, adzuna_limit)
+            
+                # Merge both
+                results = results_serp + results_adzuna
+            
+            elif provider.startswith("Adzuna"):
                 results = get_leads_adzuna(job_q, loc_q, date_val, type_val, target)
+            
             else:
                 results = get_leads_jsearch(job_q, loc_q, date_val, type_val, target)
 
@@ -5646,8 +5722,8 @@ if st.session_state.df is not None:
                         st.error(f"❌ An error occurred: {str(e)}")
 
             # # --- PERSISTENT DOWNLOAD BUTTON FOR STEP 4 ---
-            if "mapped_data" in st.session_state:
-                st.markdown("### 🔥 Final Instantly-Ready File")
+            # if "mapped_data" in st.session_state:
+            #     st.markdown("### 🔥 Final Instantly-Ready File")
             #     final_df = st.session_state.mapped_data
                 
             #     # Previewing specific columns
@@ -5662,7 +5738,7 @@ if st.session_state.df is not None:
             #         mime="text/csv",
             #         key="final_instantly_download_btn"
             #     )
-
+            # --- PERSISTENT DOWNLOAD BUTTON FOR STEP 4 ---
             if "mapped_data" in st.session_state:
                 st.markdown("### 🔥 Final Instantly-Ready File")
                 final_df = st.session_state.mapped_data
