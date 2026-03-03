@@ -825,6 +825,7 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit, max_pages=None):  # 👈 Ad
             params["next_page_token"] = token
 
         try:
+            time.sleep(1.5)
             search = GoogleSearch(params)
             res = search.get_dict()
             
