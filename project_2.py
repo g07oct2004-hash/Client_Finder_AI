@@ -625,8 +625,8 @@ EXCLUDE_COMPANIES = {
     "google", "alphabet", "microsoft", "amazon", "aws", "apple", "meta", "facebook", "netflix", "nvidia", 
     "intel", "amd", "adobe", "salesforce", "oracle", "ibm", "cisco", "hp", "dell", "sap", "servicenow", 
     "uber", "airbnb", "twitter", "x.corp", "atlassian", "zoom", "shopify", "spotify", "snowflake", "palantir",
-    "BlackRock","Salesforce, Inc.","Staples","Sunoco","Asana","Harward University",
-
+    "BlackRock","Salesforce, Inc.","Staples","Sunoco","Asana","Harward University","FreelanceJobs","Indeed",
+    
     # --- INDIAN TECH GIANTS (IT SERVICES) ---
     "tcs", "tata consultancy services", "infosys", "wipro", "hcl", "hcltech", "tech mahindra", "lti", "l&t", 
     "mindtree", "cognizant", "mphasis", "persistent systems", "lti mindtree", "zensar", "cyient",
@@ -656,7 +656,117 @@ EXCLUDE_COMPANIES = {
 }
 
 
-def get_leads_serpapi(q, loc, date_f, type_f, limit):
+# def get_leads_serpapi(q, loc, date_f, type_f, limit):
+
+#     detected_country = detect_search_country(loc)
+#     gl, hl = COUNTRY_GL_HL_MAP.get(detected_country, ("us", "en"))
+
+#     all_jobs, seen = [], set()
+#     token = None
+
+#     api_index = 0
+#     max_rotation_retries = len(SERPAPI_KEYS) * 3
+#     retry_count = 0
+#     dead_keys = set()
+
+#     # Handle Chips (Filters)
+#     chips = []
+#     if date_f != "All":
+#         chips.append(f"date_posted:{date_f}")
+#     if type_f != "All":
+#         chips.append(f"employment_type:{type_f}")
+#     chips_q = ",".join(chips) if chips else None
+
+#     print(f"\n🚀 Starting Smart Extraction: {q} | Location: {loc} | Limit: {limit}")
+#     print(f"🔑 Total API Keys: {len(SERPAPI_KEYS)}")
+
+#     while len(all_jobs) < limit and retry_count < max_rotation_retries:
+
+#         current_api_key = SERPAPI_KEYS[api_index % len(SERPAPI_KEYS)]
+        
+#         # 1. FAILSAFE: Fixes the 'NoneType' string slicing error
+#         if not current_api_key:
+#             api_index += 1
+#             retry_count += 1
+#             continue
+
+#         masked_key = f"{current_api_key[:4]}...{current_api_key[-4:]}"
+
+#         params = {
+#             "engine": "google_jobs",
+#             "q": q,
+#             "location": loc,
+#             "gl": gl,
+#             "hl": hl,
+#             "chips": chips_q,
+#             "api_key": current_api_key,
+#             "no_cache": False
+#         }
+
+#         if token:
+#             params["next_page_token"] = token
+
+#         try:
+#             search = GoogleSearch(params)
+#             res = search.get_dict()
+
+#             if "error" in res:
+#                 print(f"   ❌ Key Failed: {masked_key} → {res['error']}")
+
+#                 if "limit" in res["error"].lower():
+#                     dead_keys.add(current_api_key)
+
+#                 api_index += 1
+#                 retry_count += 1
+#                 token = None
+#                 continue
+
+#             jobs = res.get("jobs_results", [])
+
+#             if not jobs:
+#                 api_index += 1
+#                 token = None
+#                 continue
+
+#             print(f"   ✅ {len(jobs)} Jobs Fetched using {masked_key}")
+
+#             for j in jobs:
+#                 company_raw = j.get("company_name", "").strip()
+                
+#                 # Exclude filter logic removed from here (Moved to the end)
+
+#                 key = f"{j.get('title')}-{company_raw}-{j.get('location')}".lower()
+#                 if key in seen:
+#                     continue
+#                 seen.add(key)
+
+#                 all_jobs.append({
+#                     "Job Title": j.get("title"),
+#                     "Company": company_raw,
+#                     "Location": j.get("location"),
+#                     "Country": extract_country(j.get("location")),
+#                     "Type": j.get("job_type", "Not Specified"),
+#                     "Market Source": "Google Jobs (SerpAPI)",
+#                     "Posted": j.get("detected_extensions", {}).get("posted_at", "Recent"),
+#                     "Apply Link": j.get("apply_options", [{}])[0].get("link"),
+#                     "Job Description": j.get("description", "Not available (basic view)"),
+#                     "Company URL": j.get("via", "Not available")
+#                 })
+
+#                 if len(all_jobs) >= limit:
+#                     break
+
+#             token = res.get("serpapi_pagination", {}).get("next_page_token")
+#             if not token:
+#                 api_index += 1
+
+#         except Exception as e:
+#             logger.error(f"SerpAPI error: {e}")
+#             api_index += 1
+#             retry_count += 1
+#             token = None
+
+def get_leads_serpapi(q, loc, date_f, type_f, limit, max_pages=None):  # 👈 Added max_pages
 
     detected_country = detect_search_country(loc)
     gl, hl = COUNTRY_GL_HL_MAP.get(detected_country, ("us", "en"))
@@ -668,6 +778,9 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
     max_rotation_retries = len(SERPAPI_KEYS) * 3
     retry_count = 0
     dead_keys = set()
+    
+    # 🆕 Initialize Credit Counter
+    request_count = 0 
 
     # Handle Chips (Filters)
     chips = []
@@ -681,10 +794,15 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
     print(f"🔑 Total API Keys: {len(SERPAPI_KEYS)}")
 
     while len(all_jobs) < limit and retry_count < max_rotation_retries:
+        
+        # 🆕 CREDIT SAVER LOGIC: Stop if max_pages limit is hit
+        if max_pages and request_count >= max_pages:
+            print(f"🛑 Max Credit Limit Reached ({max_pages} Pages). Stopping SerpAPI.")
+            break
 
         current_api_key = SERPAPI_KEYS[api_index % len(SERPAPI_KEYS)]
         
-        # 1. FAILSAFE: Fixes the 'NoneType' string slicing error
+        # 1. FAILSAFE
         if not current_api_key:
             api_index += 1
             retry_count += 1
@@ -709,13 +827,14 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
         try:
             search = GoogleSearch(params)
             res = search.get_dict()
+            
+            # 🆕 Increment Credit Count on success
+            request_count += 1
 
             if "error" in res:
                 print(f"   ❌ Key Failed: {masked_key} → {res['error']}")
-
                 if "limit" in res["error"].lower():
                     dead_keys.add(current_api_key)
-
                 api_index += 1
                 retry_count += 1
                 token = None
@@ -733,7 +852,7 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
             for j in jobs:
                 company_raw = j.get("company_name", "").strip()
                 
-                # Exclude filter logic removed from here (Moved to the end)
+                # Exclude filter logic (Moved to end as per your original code)
 
                 key = f"{j.get('title')}-{company_raw}-{j.get('location')}".lower()
                 if key in seen:
@@ -766,6 +885,33 @@ def get_leads_serpapi(q, loc, date_f, type_f, limit):
             retry_count += 1
             token = None
 
+    # EXCLUDE FILTER LOGIC (Preserving your original logic)
+    final_clean_jobs = []
+    excluded_company_names = []  
+
+    for job in all_jobs:
+        company_raw = str(job.get("Company", ""))
+        company_lower = company_raw.lower()
+        
+        is_excluded = False
+        for ex in EXCLUDE_COMPANIES:
+            if str(ex).lower() in company_lower:
+                is_excluded = True
+                excluded_company_names.append(company_raw) 
+                break
+                
+        if not is_excluded:
+            final_clean_jobs.append(job)
+
+    unique_excluded = set(excluded_company_names)
+    print(f"\n🚫 Excluded Companies Count: {len(excluded_company_names)}")
+    if unique_excluded:
+        print(f"📋 Names of Excluded Companies: {', '.join(unique_excluded)}")
+        
+    print(f"\n🏁 Final Output: {len(final_clean_jobs)} Clean Jobs")
+    print(f"💀 Dead Keys Detected: {len(dead_keys)}")
+
+    return final_clean_jobs[:limit]
     # 2. 🔥 EXCLUDE FILTER MOVED TO THE END
     # # Applied after all data is fetched and credits are consumed
     # final_clean_jobs = []
@@ -3673,16 +3819,39 @@ if st.button("Generate Final Report"):
             elif provider.startswith("LinkedIn"):
                 results = get_leads_linkedin(job_q, loc_q, date_val, type_val, target)
             
+            # elif provider.startswith("Adzuna + SerpAPI"):
+            #     # Split target between both sources
+            #     serp_limit = target // 2
+            #     adzuna_limit = target - serp_limit
+            
+            #     results_serp = get_leads_serpapi(job_q, loc_q, date_val, type_val, serp_limit)
+            #     results_adzuna = get_leads_adzuna(job_q, loc_q, date_val, type_val, adzuna_limit)
+            
+            #     # Merge both
+            #     results = results_serp + results_adzuna
             elif provider.startswith("Adzuna + SerpAPI"):
-                # Split target between both sources
-                serp_limit = target // 2
-                adzuna_limit = target - serp_limit
-            
-                results_serp = get_leads_serpapi(job_q, loc_q, date_val, type_val, serp_limit)
-                results_adzuna = get_leads_adzuna(job_q, loc_q, date_val, type_val, adzuna_limit)
-            
-                # Merge both
-                results = results_serp + results_adzuna
+                # 1️⃣ first PRIORITY: Adzuna (Try to get everything for free)
+                st.info(f"🔍 Checking Adzuna first for {target} leads...")
+                results_adzuna = get_leads_adzuna(job_q, loc_q, date_val, type_val, target)
+                
+                found_adzuna = len(results_adzuna)
+                remaining = target - found_adzuna
+                
+                results_serp = []
+                
+                # 2️⃣ second PRIORITY: SerpAPI (Only run if we still need leads)
+                if remaining > 0:
+                    st.info(f"📉 Adzuna found {found_adzuna}. Using SerpAPI for remaining {remaining} ")
+                    
+                    # We pass max_pages=10 here to strictly limit costs
+                    results_serp = get_leads_serpapi(
+                        job_q, loc_q, date_val, type_val, 
+                        limit=remaining, 
+                        max_pages=10  # 👈 THIS SAVES YOUR CREDITS
+                    )
+                
+                # Merge Both Results
+                results = results_adzuna + results_serp
             
             elif provider.startswith("Adzuna"):
                 results = get_leads_adzuna(job_q, loc_q, date_val, type_val, target)
